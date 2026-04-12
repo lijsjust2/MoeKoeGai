@@ -1,0 +1,582 @@
+import { get } from './request'
+
+const log = (...args) => {
+  console.log('[metadata]', ...args)
+}
+
+const logError = (...args) => {
+  console.error('[metadata]', ...args)
+}
+
+const logWarn = (...args) => {
+  console.warn('[metadata]', ...args)
+}
+
+export async function fetchSongInfo(hash) {
+  try {
+    log('开始获取歌曲信息，hash:', hash)
+    
+    const response = await get(`/privilege/lite?hash=${hash}`)
+    
+    if (response.status === 1 && response.data && response.data.length > 0) {
+      const songData = response.data[0]
+      log('歌曲信息获取成功:', songData.songname, '-', songData.singername)
+      
+      let publishDate = songData.publish_date || ''
+      
+      if (!publishDate && songData.album_id) {
+        const albumInfo = await fetchAlbumInfo(songData.album_id)
+        if (albumInfo && albumInfo.publish_date) {
+          publishDate = albumInfo.publish_date
+          log('从专辑信息获取发行日期:', publishDate)
+        }
+      }
+      
+      return {
+        name: songData.songname || '',
+        author: songData.singername || '',
+        album: songData.album_name || '',
+        album_id: songData.album_id || '',
+        hash: songData.hash || hash,
+        cover: songData.trans_param?.union_cover?.replace('{size}', '480') || '',
+        publish_date: publishDate
+      }
+    }
+    
+    log('未找到歌曲信息')
+    return null
+  } catch (error) {
+    logError('获取歌曲信息失败:', error)
+    return null
+  }
+}
+
+export async function fetchAlbumInfo(albumId) {
+  try {
+    log('开始获取专辑信息，album_id:', albumId)
+    
+    const response = await get(`/album/detail?id=${albumId}`)
+    
+    if (response.status === 1 && response.data && response.data.length > 0) {
+      const albumData = response.data[0]
+      log('专辑信息获取成功:', albumData.album_name, '发行日期:', albumData.publish_date)
+      return {
+        name: albumData.album_name || '',
+        publish_date: albumData.publish_date || '',
+        cover: albumData.sizable_cover || albumData.cover || ''
+      }
+    }
+    
+    log('未找到专辑信息')
+    return null
+  } catch (error) {
+    logError('获取专辑信息失败:', error)
+    return null
+  }
+}
+
+export async function fetchLyrics(hash) {
+  try {
+    log('开始获取歌词，hash:', hash)
+    
+    // 首先调用 /search/lyric 接口获取歌词的 id 和 accesskey
+    const searchResponse = await get(`/search/lyric?hash=${hash}`)
+    
+    if (searchResponse.status !== 200 || !searchResponse.candidates || searchResponse.candidates.length === 0) {
+      log('未找到歌词候选')
+      return null
+    }
+    
+    // 从候选列表中取第一个，获取 id 和 accesskey
+    const candidate = searchResponse.candidates[0]
+    const lyricId = candidate.id
+    const accesskey = candidate.accesskey
+    
+    if (lyricId && accesskey) {
+      // 然后使用获取到的 id 和 accesskey 调用 /lyric 接口
+      const lyricResponse = await get(`/lyric?id=${lyricId}&accesskey=${accesskey}&fmt=lrc&decode=true`)
+      
+      if (lyricResponse.status === 200) {
+        // 尝试从不同字段获取歌词
+        const lyrics = lyricResponse.decodeContent || lyricResponse.content
+        
+        if (lyrics) {
+          log('歌词获取成功，长度:', lyrics.length)
+          return lyrics
+        }
+      }
+    }
+    
+    log('未找到歌词数据')
+    return null
+  } catch (error) {
+    logError('获取歌词失败:', error)
+    return null
+  }
+}
+
+export async function fetchCover(coverUrl) {
+  if (!coverUrl) return null
+  
+  try {
+    log('开始获取封面图:', coverUrl)
+    
+    const response = await fetch(coverUrl)
+    if (!response.ok) {
+      throw new Error(`封面图请求失败: ${response.status}`)
+    }
+    
+    const blob = await response.blob()
+    log('封面图获取成功，大小:', blob.size)
+    return blob
+  } catch (error) {
+    logError('获取封面图失败:', error)
+    return null
+  }
+}
+
+export async function embedMusicMetadata(audioBlob, songInfo, coverUrl, lyrics, quality = '320') {
+  try {
+    log('开始内嵌元数据...')
+    
+    const qualityStr = typeof quality === 'object' ? quality.quality : quality
+    
+    const arrayBuffer = await audioBlob.arrayBuffer()
+    const uint8Array = new Uint8Array(arrayBuffer)
+    
+    const fileType = audioBlob.type
+    log('文件类型:', fileType)
+    
+    const isFlacByHeader = uint8Array.subarray(0, 4).join(',') === '102,76,65,67'
+    const isFlacByName = audioBlob.name?.toLowerCase().endsWith('.flac')
+    const isFlacByType = fileType === 'audio/flac' || fileType.includes('flac')
+    const isFlacByExtension = audioBlob.name?.toLowerCase().includes('.flac')
+    const isFlacByQuality = qualityStr === 'flac' || qualityStr === 'lossless'
+    
+    log('FLAC 文件检测:', {
+      isFlacByHeader,
+      isFlacByName,
+      isFlacByType,
+      isFlacByExtension,
+      isFlacByQuality,
+      fileName: audioBlob.name,
+      quality: qualityStr
+    })
+    
+    if (isFlacByHeader || isFlacByType || isFlacByQuality) {
+      log('检测到 FLAC 文件，使用 Vorbis Comments')
+      return await embedFlacMetadata(arrayBuffer, songInfo, coverUrl, lyrics)
+    }
+    
+    log('处理非 FLAC 文件，使用 ID3 标签')
+    return await embedId3Metadata(uint8Array, songInfo, coverUrl, lyrics)
+  } catch (error) {
+    logError('元数据内嵌失败:', error)
+    return {
+      success: false,
+      outputBlob: audioBlob,
+      originalBlob: audioBlob,
+      message: `元数据内嵌失败: ${error.message}`
+    }
+  }
+}
+
+async function embedFlacMetadata(arrayBuffer, songInfo, coverUrl, lyrics) {
+  try {
+    const metaflacModule = await import('metaflac-browser-js')
+    const Metaflac = metaflacModule.default || metaflacModule
+    
+    log('metaflac-browser-js 导入成功')
+    
+    const flac = Metaflac.fromArrayBuffer(arrayBuffer)
+    log('Metaflac 实例创建成功')
+    
+    const sampleRate = flac.getSampleRate()
+    const channels = flac.getChannels()
+    const bps = flac.getBps()
+    const totalSamples = flac.getTotalSamples()
+    const duration = totalSamples && sampleRate ? (totalSamples / sampleRate).toFixed(2) : 0
+    const bitRate = sampleRate && channels && bps ? (sampleRate * channels * bps / 1000).toFixed(0) : 0
+    
+    log('FLAC 流信息:', {
+      sampleRate: sampleRate + ' Hz',
+      channels: channels,
+      bitsPerSample: bps,
+      totalSamples: totalSamples,
+      duration: duration + ' 秒',
+      bitRate: bitRate + ' kbps'
+    })
+    
+    flac.removeAllTags()
+    log('已清除所有现有标签')
+    
+    const cleanName = getSongName(songInfo)
+    const cleanAuthor = getSongArtist(songInfo)
+    const albumName = getAlbumName(songInfo)
+    const albumYear = getAlbumYear(songInfo)
+    
+    flac.setTag(`TITLE=${cleanName}`)
+    flac.setTag(`ARTIST=${cleanAuthor}`)
+    flac.setTag(`ALBUM=${albumName}`)
+    flac.setTag(`DATE=${albumYear}`)
+    flac.setTag('GENRE=Music')
+    flac.setTag('COMMENT=Downloaded by MoeKoeMusic')
+    
+    if (songInfo.track || songInfo.originalData?.track) {
+      flac.setTag(`TRACKNUMBER=${songInfo.track || songInfo.originalData?.track}`)
+    }
+    if (songInfo.disc || songInfo.originalData?.disc) {
+      flac.setTag(`DISCNUMBER=${songInfo.disc || songInfo.originalData?.disc}`)
+    }
+    
+    log('FLAC 基本标签设置完成:', {
+      title: cleanName,
+      artist: cleanAuthor,
+      album: albumName,
+      year: albumYear
+    })
+    
+    if (coverUrl) {
+      log('开始处理封面图:', coverUrl)
+      try {
+        const coverBlob = await fetchCover(coverUrl)
+        if (coverBlob) {
+          await flac.importPictureFromFile(coverBlob)
+          log('封面图已添加到元数据')
+        }
+      } catch (coverError) {
+        logWarn('获取封面图失败:', coverError)
+      }
+    } else {
+      log('没有封面图URL')
+    }
+    
+    if (lyrics) {
+      log('歌词长度:', lyrics.length)
+      try {
+        flac.setTag(`LYRICS=${lyrics}`)
+        log('歌词已添加到元数据')
+      } catch (lyricsError) {
+        logWarn('歌词处理失败:', lyricsError)
+      }
+    }
+    
+    const outputBlob = flac.saveAsBlob()
+    log('FLAC 元数据内嵌完成，输出大小:', outputBlob.size)
+    
+    return {
+      success: true,
+      outputBlob: outputBlob,
+      originalBlob: new Blob([arrayBuffer]),
+      message: '元数据内嵌成功'
+    }
+  } catch (flacError) {
+    logError('FLAC 标签处理失败:', flacError)
+    throw flacError
+  }
+}
+
+async function embedId3Metadata(uint8Array, songInfo, coverUrl, lyrics) {
+  try {
+    const id3Module = await import('browser-id3-writer')
+    let BrowserID3Writer
+    
+    if (typeof id3Module.BrowserID3Writer === 'function') {
+      BrowserID3Writer = id3Module.BrowserID3Writer
+    } else if (typeof id3Module.default === 'function') {
+      BrowserID3Writer = id3Module.default
+    } else {
+      const exports = Object.keys(id3Module)
+      for (const key of exports) {
+        if (typeof id3Module[key] === 'function' && key.toLowerCase().includes('writer')) {
+          BrowserID3Writer = id3Module[key]
+          break
+        }
+      }
+    }
+    
+    if (!BrowserID3Writer) {
+      throw new Error('无法找到 BrowserID3Writer 构造函数')
+    }
+    
+    log('BrowserID3Writer 导入成功')
+    
+    const writer = new BrowserID3Writer(uint8Array)
+    
+    const cleanName = getSongName(songInfo)
+    const cleanAuthor = getSongArtist(songInfo)
+    const albumName = getAlbumName(songInfo)
+    const albumYear = getAlbumYear(songInfo)
+    
+    writer.setFrame('TIT2', cleanName)
+    writer.setFrame('TPE1', [cleanAuthor])
+    writer.setFrame('TALB', albumName)
+    writer.setFrame('TYER', albumYear)
+    writer.setFrame('TCON', ['Music'])
+    
+    if (songInfo.track || songInfo.originalData?.track) {
+      writer.setFrame('TRCK', String(songInfo.track || songInfo.originalData?.track))
+    }
+    
+    log('基本标签设置完成:', {
+      title: cleanName,
+      artist: cleanAuthor,
+      album: albumName,
+      year: albumYear
+    })
+    
+    if (coverUrl) {
+      log('开始处理封面图:', coverUrl)
+      try {
+        const coverBlob = await fetchCover(coverUrl)
+        if (coverBlob) {
+          const coverArrayBuffer = await coverBlob.arrayBuffer()
+          const coverUint8Array = new Uint8Array(coverArrayBuffer)
+          
+          log('封面图获取成功，大小:', coverArrayBuffer.byteLength)
+          
+          writer.setFrame('APIC', {
+            type: 3,
+            description: 'Cover',
+            data: coverUint8Array,
+            mime: coverBlob.type || 'image/jpeg'
+          })
+          
+          log('封面图已添加到元数据')
+        }
+      } catch (coverError) {
+        logWarn('获取封面图失败:', coverError)
+      }
+    } else {
+      log('没有封面图URL')
+    }
+    
+    if (lyrics) {
+      log('歌词长度:', lyrics.length)
+      writer.setFrame('USLT', {
+        description: 'Lyrics',
+        lyrics: lyrics,
+        language: 'chi'
+      })
+      log('歌词已添加到元数据')
+    } else {
+      log('没有歌词')
+    }
+    
+    if (typeof writer.addTag === 'function') {
+      writer.addTag()
+    } else if (typeof writer.write === 'function') {
+      writer.write()
+    }
+    
+    let taggedSongBlob
+    if (typeof writer.getBlob === 'function') {
+      taggedSongBlob = writer.getBlob()
+    } else if (typeof writer.getResult === 'function') {
+      taggedSongBlob = writer.getResult()
+    } else {
+      logWarn('无法获取带元数据的音频，返回原始文件')
+      return {
+        success: false,
+        outputBlob: new Blob([uint8Array]),
+        originalBlob: new Blob([uint8Array]),
+        message: '元数据内嵌失败，返回原始音频文件'
+      }
+    }
+    
+    log('元数据内嵌完成，输出大小:', taggedSongBlob.size)
+    
+    return {
+      success: true,
+      outputBlob: taggedSongBlob,
+      originalBlob: new Blob([uint8Array]),
+      message: '元数据内嵌成功'
+    }
+  } catch (error) {
+    logError('ID3 标签处理失败:', error)
+    throw error
+  }
+}
+
+function getSongName(songInfo) {
+  return songInfo.name || songInfo.ori_audio_name || songInfo.songname || songInfo.audio_name || songInfo.OriSongName || '未知歌曲'
+}
+
+function getSongArtist(songInfo) {
+  return songInfo.author || songInfo.author_name || songInfo.singer_name || songInfo.SingerName || '未知歌手'
+}
+
+function getAlbumName(songInfo) {
+  return songInfo.album_info?.album_name || songInfo.album_name || songInfo.album || songInfo.AlbumName || '未知专辑'
+}
+
+function getAlbumYear(songInfo) {
+  let albumYear = new Date().getFullYear().toString()
+  
+  log('获取发行年份，songInfo.publish_date:', songInfo.publish_date)
+  
+  if (songInfo.publish_date) {
+    const dateMatch = songInfo.publish_date.match(/(\d{4})/)
+    if (dateMatch) {
+      albumYear = dateMatch[1]
+      log('从 publish_date 提取年份:', albumYear)
+      return albumYear
+    }
+  }
+  
+  if (songInfo.rank_id_publish_date) {
+    const dateMatch = songInfo.rank_id_publish_date.match(/(\d{4})/)
+    if (dateMatch) {
+      albumYear = dateMatch[1]
+      log('从 rank_id_publish_date 提取年份:', albumYear)
+      return albumYear
+    }
+  }
+  
+  if (songInfo.PublishDate) {
+    const dateMatch = songInfo.PublishDate.match(/(\d{4})/)
+    if (dateMatch) {
+      albumYear = dateMatch[1]
+      log('从 PublishDate 提取年份:', albumYear)
+      return albumYear
+    }
+  }
+  
+  log('未找到发行日期，使用当前年份:', albumYear)
+  return albumYear
+}
+
+export async function downloadWithMetadata(song, downloadUrl, options = {}) {
+  try {
+    let songInfo = song
+    const hash = song?.hash || song?.FileHash || options.hash
+    const qualityObj = options.quality || { quality: '320' }
+    const quality = typeof qualityObj === 'object' ? qualityObj.quality : qualityObj
+    
+    log('传入的歌曲信息:', {
+      name: song?.name,
+      author: song?.author,
+      album: song?.album,
+      album_id: song?.album_id,
+      publish_date: song?.publish_date,
+      hash: hash,
+      quality: quality
+    })
+    
+    if (!songInfo || !songInfo.name) {
+      if (hash) {
+        log('歌曲信息不完整，尝试通过 API 获取，hash:', hash)
+        const fetchedInfo = await fetchSongInfo(hash)
+        if (fetchedInfo) {
+          songInfo = { ...song, ...fetchedInfo }
+          log('成功获取歌曲信息:', songInfo.name, '-', songInfo.author, '发行日期:', songInfo.publish_date)
+        }
+      }
+    } else if (!songInfo.publish_date) {
+      const albumId = songInfo.album_id || songInfo.album?.id || songInfo.originalData?.album_id
+      if (albumId) {
+        log('歌曲缺少发行日期，尝试获取专辑信息，album_id:', albumId)
+        const albumInfo = await fetchAlbumInfo(albumId)
+        if (albumInfo && albumInfo.publish_date) {
+          songInfo = { ...songInfo, publish_date: albumInfo.publish_date }
+          log('从专辑信息获取发行日期:', songInfo.publish_date)
+        }
+      } else {
+        log('歌曲缺少 album_id，无法获取发行日期')
+      }
+    }
+    
+    if (!songInfo) {
+      songInfo = { name: '未知歌曲', author: '未知歌手', hash: hash }
+    }
+    
+    log('最终歌曲信息:', {
+      name: songInfo.name,
+      author: songInfo.author,
+      album: songInfo.album,
+      publish_date: songInfo.publish_date
+    })
+    
+    log('开始下载带标签的歌曲:', getSongName(songInfo))
+    
+    const coverUrl = options.coverUrl || getCoverUrl(songInfo)
+    const lyrics = options.lyrics || await fetchLyrics(songInfo.hash || songInfo.FileHash || hash)
+    
+    log('开始下载音频文件:', downloadUrl)
+    const response = await fetch(downloadUrl, {
+      method: 'GET',
+      headers: {
+        'Referer': 'https://www.kugou.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`音频下载失败: ${response.status}`)
+    }
+    
+    const audioBlob = await response.blob()
+    log('音频文件下载完成，大小:', audioBlob.size)
+    
+    const metadataResult = await embedMusicMetadata(audioBlob, songInfo, coverUrl, lyrics, quality)
+    
+    let fileExt = 'mp3'
+    if (quality === 'flac' || quality === 'lossless') {
+      fileExt = 'flac'
+    } else if (downloadUrl) {
+      if (downloadUrl.includes('.ape')) {
+        fileExt = 'ape'
+      } else if (downloadUrl.includes('.wav')) {
+        fileExt = 'wav'
+      }
+    }
+    log('文件扩展名:', fileExt, '音质:', quality)
+    
+    const songName = getSongName(songInfo)
+    const artistName = getSongArtist(songInfo)
+    const fileName = `${songName}-${artistName}.${fileExt}`
+    
+    log('最终文件名:', fileName)
+    
+    return {
+      success: metadataResult.success,
+      outputBlob: metadataResult.outputBlob,
+      fileName: fileName,
+      message: metadataResult.message
+    }
+  } catch (error) {
+    logError('下载失败:', error)
+    return {
+      success: false,
+      blob: null,
+      fileName: null,
+      message: `下载失败: ${error.message}`
+    }
+  }
+}
+
+function getCoverUrl(song) {
+  if (!song) return null
+  
+  if (song.union_cover && song.union_cover.includes('http')) {
+    return song.union_cover.replace('{size}', '480').replace(/[`"]/g, '').trim()
+  }
+  
+  if (song.img && song.img.includes('http')) {
+    return song.img.replace(/[`"]/g, '').trim()
+  }
+  
+  if (song.sizable_cover && song.sizable_cover.includes('http')) {
+    return song.sizable_cover.replace('{size}', '480').replace(/[`"]/g, '').trim()
+  }
+  
+  if (song.album_info?.sizable_cover && song.album_info.sizable_cover.includes('http')) {
+    return song.album_info.sizable_cover.replace('{size}', '480').replace(/[`"]/g, '').trim()
+  }
+  
+  if (song.trans_param?.union_cover && song.trans_param.union_cover.includes('http')) {
+    return song.trans_param.union_cover.replace('{size}', '480').replace(/[`"]/g, '').trim()
+  }
+  
+  return null
+}

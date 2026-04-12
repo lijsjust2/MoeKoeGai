@@ -1,0 +1,161 @@
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_version:
+        description: '构建版本（latest 或指定版本号）'
+        required: false
+        default: 'latest'
+        type: string
+      create_release:
+        description: '是否创建 GitHub Release（用于发布正式版本）'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image (AMD64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            lijsfun/moekoemusic:amd64-${{ github.event.inputs.build_version }}
+            lijsfun/moekoemusic:amd64-latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          outputs: type=docker,dest=/tmp/moekoemusic-amd64.tar
+          target: base-amd64
+
+      - name: Build and push Docker image (ARM64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: |
+            lijsfun/moekoemusic:arm64-${{ github.event.inputs.build_version }}
+            lijsfun/moekoemusic:arm64-latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new-arm,mode=max
+          outputs: type=docker,dest=/tmp/moekoemusic-arm64.tar
+          target: base-arm64
+
+      - name: Update cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new-arm /tmp/.buildx-cache-arm
+
+      - name: Verify built images
+        run: |
+          echo "=== Verifying AMD64 image ==="
+          ls -lh /tmp/moekoemusic-amd64.tar
+          file /tmp/moekoemusic-amd64.tar
+          
+          echo -e "\n=== Verifying ARM64 image ==="
+          ls -lh /tmp/moekoemusic-arm64.tar
+          file /tmp/moekoemusic-arm64.tar
+          
+          echo -e "\n=== Checking tar file contents ==="
+          tar -tvf /tmp/moekoemusic-amd64.tar | head -5
+          tar -tvf /tmp/moekoemusic-arm64.tar | head -5
+
+      - name: Get version and timestamp
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.build_version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="latest"
+          fi
+          
+          # 获取当前时间（北京时间 UTC+8）
+          TIMESTAMP=$(date -u +%Y%m%d%H%M)
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+
+      - name: Rename files with version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # 重命名 AMD64 镜像
+          mv /tmp/moekoemusic-amd64.tar "/tmp/moekoemusic-amd64-${VERSION}.tar"
+          
+          # 重命名 ARM64 镜像
+          mv /tmp/moekoemusic-arm64.tar "/tmp/moekoemusic-arm64-${VERSION}.tar"
+          
+          echo "Renamed files:"
+          ls -lh /tmp/moekoemusic-*.tar
+
+      - name: Create Release
+        if: github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.build_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Docker Image ${{ steps.version.outputs.version }}"
+          body: |
+          draft: false
+          prerelease: false
+          files: |
+            /tmp/moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
+            /tmp/moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
+
+      - name: Upload artifacts
+        if: github.event.inputs.create_release == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images-${{ steps.version.outputs.version }}
+          path: |
+            /tmp/moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
+            /tmp/moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
+          retention-days: 7
+
+      - name: Create and push manifest
+        run: |
+          VERSION="${{ github.event.inputs.build_version }}"
+          
+          # 创建并推送多架构镜像
+          docker manifest create lijsfun/moekoemusic:${VERSION} \
+            lijsfun/moekoemusic:amd64-${VERSION} \
+            lijsfun/moekoemusic:arm64-${VERSION}
+          
+          docker manifest create lijsfun/moekoemusic:latest \
+            lijsfun/moekoemusic:amd64-latest \
+            lijsfun/moekoemusic:arm64-latest
+          
+          docker manifest push lijsfun/moekoemusic:${VERSION}
+          docker manifest push lijsfun/moekoemusic:latest
