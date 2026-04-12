@@ -37,37 +37,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push Docker image (AMD64)
+      - name: Build Docker image (AMD64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: false
           platforms: linux/amd64
-          tags: |
-            lijsfun/moekoemusic:amd64-${{ github.event.inputs.build_version }}
-            lijsfun/moekoemusic:amd64-latest
+          tags: moekoemusic:amd64-${{ github.event.inputs.build_version }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
           outputs: type=docker,dest=/tmp/moekoemusic-amd64.tar
           target: base-amd64
 
-      - name: Build and push Docker image (ARM64)
+      - name: Build Docker image (ARM64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: false
           platforms: linux/arm64
-          tags: |
-            lijsfun/moekoemusic:arm64-${{ github.event.inputs.build_version }}
-            lijsfun/moekoemusic:arm64-latest
+          tags: moekoemusic:arm64-${{ github.event.inputs.build_version }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new-arm,mode=max
           outputs: type=docker,dest=/tmp/moekoemusic-arm64.tar
@@ -101,7 +91,6 @@ jobs:
             VERSION="latest"
           fi
           
-          # 获取当前时间（北京时间 UTC+8）
           TIMESTAMP=$(date -u +%Y%m%d%H%M)
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -111,10 +100,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           
-          # 重命名 AMD64 镜像
           mv /tmp/moekoemusic-amd64.tar "/tmp/moekoemusic-amd64-${VERSION}.tar"
-          
-          # 重命名 ARM64 镜像
           mv /tmp/moekoemusic-arm64.tar "/tmp/moekoemusic-arm64-${VERSION}.tar"
           
           echo "Renamed files:"
@@ -128,6 +114,27 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "Docker Image ${{ steps.version.outputs.version }}"
           body: |
+            Docker 镜像构建版本: ${{ steps.version.outputs.version }}
+            
+            包含以下架构:
+            - AMD64 (x86_64)
+            - ARM64 (aarch64)
+            
+            使用方法:
+            ```bash
+            # 加载镜像
+            docker load -i moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
+            # 或
+            docker load -i moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
+            
+            # 运行容器
+            docker run -d \
+              --name moekoe-music \
+              --restart unless-stopped \
+              -p 8880:8880 \
+              -p 6521:6521 \
+              moekoemusic:amd64-${{ steps.version.outputs.version }}
+            ```
           draft: false
           prerelease: false
           files: |
@@ -143,19 +150,3 @@ jobs:
             /tmp/moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
             /tmp/moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
           retention-days: 7
-
-      - name: Create and push manifest
-        run: |
-          VERSION="${{ github.event.inputs.build_version }}"
-          
-          # 创建并推送多架构镜像
-          docker manifest create lijsfun/moekoemusic:${VERSION} \
-            lijsfun/moekoemusic:amd64-${VERSION} \
-            lijsfun/moekoemusic:arm64-${VERSION}
-          
-          docker manifest create lijsfun/moekoemusic:latest \
-            lijsfun/moekoemusic:amd64-latest \
-            lijsfun/moekoemusic:arm64-latest
-          
-          docker manifest push lijsfun/moekoemusic:${VERSION}
-          docker manifest push lijsfun/moekoemusic:latest
