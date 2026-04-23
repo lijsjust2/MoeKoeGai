@@ -181,6 +181,37 @@
                     />
                     <p class="hint">下载完成后会将日志推送到您的手机</p>
                 </div>
+                
+                <!-- 下载等待延时配置 -->
+                <div class="delay-config">
+                    <label class="input-label">
+                        <i class="fas fa-clock"></i>
+                        <span>下载等待延时（防风控）</span>
+                    </label>
+                    <div class="delay-inputs">
+                        <input 
+                            v-model.number="downloadDelayMin" 
+                            type="number" 
+                            min="0"
+                            max="10"
+                            step="0.5"
+                            placeholder="最小值"
+                            class="input-field delay-input"
+                        />
+                        <span class="delay-separator">-</span>
+                        <input 
+                            v-model.number="downloadDelayMax" 
+                            type="number" 
+                            min="0"
+                            max="10"
+                            step="0.5"
+                            placeholder="最大值"
+                            class="input-field delay-input"
+                        />
+                        <span class="delay-unit">秒</span>
+                    </div>
+                    <p class="hint">每首歌曲下载后随机等待时间，避免触发风控（建议 1-3 秒）</p>
+                </div>
             </div>
 
             <!-- 使用 BatchDownloadManager 组件 -->
@@ -189,6 +220,8 @@
                 :show-trigger-button="true"
                 trigger-text="开始下载"
                 trigger-icon="fas fa-download"
+                :download-delay-min="downloadDelayMin"
+                :download-delay-max="downloadDelayMax"
                 @download-start="handleDownloadStart"
                 @download-complete="handleDownloadComplete"
             />
@@ -225,6 +258,10 @@ const logs = ref([]);
 // PushPlus 推送配置 - 从 localStorage 加载
 const pushplusToken = ref(getPushplusToken());
 
+// 下载等待延时配置 - 从 localStorage 加载，默认 1-3 秒
+const downloadDelayMin = ref(parseFloat(localStorage.getItem('download_delay_min')) || 1);
+const downloadDelayMax = ref(parseFloat(localStorage.getItem('download_delay_max')) || 3);
+
 // 分页相关
 const currentPage = ref(1);
 const pageSize = ref(50);
@@ -236,6 +273,20 @@ const queryStatus = ref('');
 // 监听 PushPlus Token 变化，自动保存到 localStorage
 watch(pushplusToken, (newValue) => {
     savePushplusToken(newValue);
+});
+
+// 监听下载延时配置变化，自动保存到 localStorage
+watch([downloadDelayMin, downloadDelayMax], ([newMin, newMax]) => {
+    // 确保最小值不大于最大值
+    if (newMin > newMax) {
+        downloadDelayMax.value = newMin;
+    }
+    // 确保值在合理范围内
+    const validMin = Math.max(0, Math.min(10, newMin));
+    const validMax = Math.max(0, Math.min(10, newMax));
+    
+    localStorage.setItem('download_delay_min', validMin.toString());
+    localStorage.setItem('download_delay_max', validMax.toString());
 });
 
 // 计算选中的歌曲列表
@@ -1021,6 +1072,35 @@ const handleDownloadComplete = async (result) => {
     background: rgba(255, 255, 255, 0.05);
     padding: 15px;
     border-radius: 8px;
+}
+
+.delay-config {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 15px;
+    border-radius: 8px;
+}
+
+.delay-inputs {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.delay-input {
+    width: 80px;
+    text-align: center;
+}
+
+.delay-separator {
+    font-size: 18px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.delay-unit {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.7);
 }
 
 .input-label {

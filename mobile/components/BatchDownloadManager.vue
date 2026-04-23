@@ -119,6 +119,15 @@ const props = defineProps({
     autoStart: {
         type: Boolean,
         default: false
+    },
+    // 下载等待延时配置（秒）
+    downloadDelayMin: {
+        type: Number,
+        default: 1
+    },
+    downloadDelayMax: {
+        type: Number,
+        default: 3
     }
 });
 
@@ -332,8 +341,16 @@ const handleQualitySelect = async (quality) => {
             quality: quality
         });
         
+        // 如果不是最后一首歌，添加随机延时（防风控）
         if (i < props.songs.length - 1) {
-            const delay = Math.floor(Math.random() * 2000) + 1000;
+            // 确保延时值在合理范围内
+            const minDelay = Math.max(0, Math.min(10, props.downloadDelayMin)) * 1000;
+            const maxDelay = Math.max(minDelay, Math.min(10, props.downloadDelayMax)) * 1000;
+            
+            // 生成随机延时
+            const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+            
+            console.log(`[下载延时] 等待 ${(delay/1000).toFixed(1)} 秒后下载下一首...`);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
