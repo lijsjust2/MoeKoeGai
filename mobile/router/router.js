@@ -8,6 +8,7 @@ import PlaylistDetail from '@/views/PlaylistDetail.vue';
 import Library from '@/views/Library.vue';
 import Discover from '@/views/Discover.vue';
 import VideoPlayer from '@/views/VideoPlayer.vue';
+import Download from '@/views/Download.vue';
 import { MoeAuthStore } from '@/stores/store';
 
 const routes = [
@@ -21,6 +22,7 @@ const routes = [
     { path: '/library', name: 'Library', component: Library, meta: { requiresAuth: true } },
     { path: '/discover', name: 'Discover', component: Discover },
     { path: '/videoPlayer', name: 'VideoPlayer', component: VideoPlayer },
+    { path: '/download', name: 'Download', component: Download },
 ];
 
 const router = createRouter({
