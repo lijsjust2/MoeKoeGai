@@ -345,7 +345,16 @@ const handleQualitySelect = async (quality) => {
         showResultModal.value = true;
     }
     
-    emit('download-complete', props.songs, quality);
+    // 传递详细的下载结果
+    emit('download-complete', {
+        songs: props.songs,
+        quality: quality,
+        successList: downloadResults.value.success,
+        failedList: downloadResults.value.failed,
+        totalCount: props.songs.length,
+        successCount: downloadResults.value.success.length,
+        failedCount: downloadResults.value.failed.length
+    });
 };
 
 const downloadSong = async (song, quality) => {

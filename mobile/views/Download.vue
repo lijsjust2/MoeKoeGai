@@ -622,24 +622,49 @@ const handleDownloadStart = () => {
 };
 
 // 下载完成
-const handleDownloadComplete = async (songs, quality) => {
-    const successCount = songs.length;
-    addLog(`下载完成！共 ${successCount} 首歌曲，音质: ${quality}`, 'success', 'fas fa-check-circle');
+const handleDownloadComplete = async (result) => {
+    const { songs, quality, successList, failedList, totalCount, successCount, failedCount } = result;
+    
+    addLog(`下载完成！共 ${totalCount} 首歌曲，成功 ${successCount} 首，失败 ${failedCount} 首，音质: ${quality}`, 'success', 'fas fa-check-circle');
     
     // 如果有 PushPlus Token，发送推送
     if (pushplusToken.value) {
         try {
             addLog('正在发送 PushPlus 推送...', 'info', 'fas fa-paper-plane');
             
+            // 构建精简的推送内容
+            let content = `总下载歌曲：${totalCount}首，音质${quality}\n`;
+            content += `成功下载${successCount}首，失败${failedCount}首\n\n`;
+            
+            // 成功下载的明细
+            if (successList && successList.length > 0) {
+                content += '成功下载的明细：\n';
+                successList.forEach((item, index) => {
+                    content += `${index + 1}、${item.name}\n`;
+                });
+                content += '\n';
+            }
+            
+            // 失败的明细
+            if (failedList && failedList.length > 0) {
+                content += '失败的明细：\n';
+                failedList.forEach((item, index) => {
+                    content += `${index + 1}、${item.name}`;
+                    if (item.error) {
+                        content += ` (${item.error})`;
+                    }
+                    content += '\n';
+                });
+            }
+            
             const title = `🎵 批量下载完成`;
-            const content = `歌手ID: ${artistId.value}\n下载数量: ${successCount} 首\n音质: ${quality}\n\n${formatLogsForPush(logs.value)}`;
             
-            const result = await sendPushNotification(pushplusToken.value, title, content);
+            const pushResult = await sendPushNotification(pushplusToken.value, title, content);
             
-            if (result.success) {
+            if (pushResult.success) {
                 addLog('✓ PushPlus 推送成功', 'success', 'fas fa-check-circle');
             } else {
-                addLog(`✗ PushPlus 推送失败: ${result.message}`, 'error', 'fas fa-times-circle');
+                addLog(`✗ PushPlus 推送失败: ${pushResult.message}`, 'error', 'fas fa-times-circle');
             }
         } catch (error) {
             addLog(`PushPlus 推送异常: ${error.message}`, 'warning', 'fas fa-exclamation-triangle');
