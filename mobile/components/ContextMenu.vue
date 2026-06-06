@@ -97,7 +97,8 @@ const handleDownload = (song) => {
         hash: song.FileHash || song.hash,
         author: song.SingerName || song.author,
         img: song.cover || song.img,
-        album_name: song.AlbumName || song.album,
+        album_name: song.AlbumName || song.album_name || song.album,
+        album_id: song.AlbumID || song.album_id,
         publish_date: song.PublishDate || song.publish_date
     };
     

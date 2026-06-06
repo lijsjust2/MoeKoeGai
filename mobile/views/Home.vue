@@ -206,7 +206,8 @@ const playSong = (song) => {
       song.ori_audio_name || song.name,
       getSongCover(song),
       song.author_name || song.author,
-      song.time_length || song.timelen || 0
+      song.time_length || song.timelen || 0,
+      { album_name: song.album_name, album_id: song.album_id, publish_date: song.publish_date }
     )
   }
 }
@@ -235,7 +236,8 @@ const addToPlaylist = () => {
       selectedSong.value.ori_audio_name || selectedSong.value.name,
       getSongCover(selectedSong.value),
       selectedSong.value.author_name || selectedSong.value.author,
-      selectedSong.value.time_length || selectedSong.value.timelen || 0
+      selectedSong.value.time_length || selectedSong.value.timelen || 0,
+      { album_name: selectedSong.value.album_name, album_id: selectedSong.value.album_id, publish_date: selectedSong.value.publish_date }
     )
   }
   closeMoreMenu()
@@ -248,7 +250,8 @@ const handleAddToPlaylist = (song) => {
       song.ori_audio_name || song.name,
       getSongCover(song),
       song.author_name || song.author,
-      song.time_length || song.timelen || 0
+      song.time_length || song.timelen || 0,
+      { album_name: song.album_name, album_id: song.album_id, publish_date: song.publish_date }
     )
   }
 }

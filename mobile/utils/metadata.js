@@ -222,6 +222,17 @@ async function embedFlacMetadata(arrayBuffer, songInfo, coverUrl, lyrics) {
     flac.setTag('GENRE=Music')
     flac.setTag('COMMENT=Downloaded by MoeKoeMusic')
     
+    // 专辑艺术家
+    const albumArtist = songInfo.album_artist || songInfo.author || cleanAuthor
+    if (albumArtist) {
+      flac.setTag(`ALBUMARTIST=${albumArtist}`)
+    }
+    
+    // 完整发行日期
+    if (songInfo.publish_date) {
+      flac.setTag(`RELEASEDATE=${songInfo.publish_date}`)
+    }
+    
     if (songInfo.track || songInfo.originalData?.track) {
       flac.setTag(`TRACKNUMBER=${songInfo.track || songInfo.originalData?.track}`)
     }
@@ -313,6 +324,12 @@ async function embedId3Metadata(uint8Array, songInfo, coverUrl, lyrics) {
     writer.setFrame('TALB', albumName)
     writer.setFrame('TYER', albumYear)
     writer.setFrame('TCON', ['Music'])
+    
+    // 专辑艺术家
+    const albumArtist = songInfo.album_artist || songInfo.author || cleanAuthor
+    if (albumArtist) {
+      writer.setFrame('TPE2', albumArtist)
+    }
     
     if (songInfo.track || songInfo.originalData?.track) {
       writer.setFrame('TRCK', String(songInfo.track || songInfo.originalData?.track))
@@ -446,19 +463,63 @@ function getAlbumYear(songInfo) {
   return albumYear
 }
 
+function normalizeSongInfo(song) {
+  if (!song) return song
+  
+  const normalized = { ...song }
+  
+  // 歌名：搜索 API 用 OriSongName，排行榜 API 用 songname
+  if (!normalized.name && (normalized.OriSongName || normalized.songname || normalized.audio_name)) {
+    normalized.name = normalized.OriSongName || normalized.songname || normalized.audio_name
+  }
+  
+  // 歌手：搜索 API 用 SingerName，排行榜 API 用 singername/author_name
+  if (!normalized.author && (normalized.SingerName || normalized.singername || normalized.author_name)) {
+    normalized.author = normalized.SingerName || normalized.singername || normalized.author_name
+  }
+  
+  // 专辑名：搜索 API 用 AlbumName
+  if (!normalized.album_name && !normalized.album && normalized.AlbumName) {
+    normalized.album_name = normalized.AlbumName
+    normalized.album = normalized.AlbumName
+  }
+  
+  // 专辑ID：搜索 API 用 AlbumID
+  if (!normalized.album_id && normalized.AlbumID) {
+    normalized.album_id = String(normalized.AlbumID)
+  }
+  
+  // 发行日期：搜索 API 用 PublishDate
+  if (!normalized.publish_date && normalized.PublishDate) {
+    normalized.publish_date = normalized.PublishDate
+  }
+  
+  // Hash：搜索 API 用 FileHash
+  if (!normalized.hash && normalized.FileHash) {
+    normalized.hash = normalized.FileHash
+  }
+  
+  // 封面：搜索 API 用 Image
+  if (!normalized.img && !normalized.union_cover && normalized.Image) {
+    normalized.img = normalized.Image.replace(/[`"]/g, '').trim()
+  }
+  
+  return normalized
+}
+
 export async function downloadWithMetadata(song, downloadUrl, options = {}) {
   try {
-    let songInfo = song
-    const hash = song?.hash || song?.FileHash || options.hash
+    let songInfo = normalizeSongInfo(song)
+    const hash = songInfo?.hash || songInfo?.FileHash || options.hash
     const qualityObj = options.quality || { quality: '320' }
     const quality = typeof qualityObj === 'object' ? qualityObj.quality : qualityObj
     
-    log('传入的歌曲信息:', {
-      name: song?.name,
-      author: song?.author,
-      album: song?.album,
-      album_id: song?.album_id,
-      publish_date: song?.publish_date,
+    log('传入的歌曲信息(归一化后):', {
+      name: songInfo?.name,
+      author: songInfo?.author,
+      album: songInfo?.album || songInfo?.album_name,
+      album_id: songInfo?.album_id,
+      publish_date: songInfo?.publish_date,
       hash: hash,
       quality: quality
     })
@@ -468,21 +529,40 @@ export async function downloadWithMetadata(song, downloadUrl, options = {}) {
         log('歌曲信息不完整，尝试通过 API 获取，hash:', hash)
         const fetchedInfo = await fetchSongInfo(hash)
         if (fetchedInfo) {
-          songInfo = { ...song, ...fetchedInfo }
+          songInfo = { ...songInfo, ...fetchedInfo }
           log('成功获取歌曲信息:', songInfo.name, '-', songInfo.author, '发行日期:', songInfo.publish_date)
         }
       }
-    } else if (!songInfo.publish_date) {
-      const albumId = songInfo.album_id || songInfo.album?.id || songInfo.originalData?.album_id
+    } else if (!songInfo.publish_date || !songInfo.album_name) {
+      // 有歌名但缺少专辑或发行日期，尝试补全
+      const albumId = songInfo.album_id || songInfo.AlbumID || songInfo.album?.id || songInfo.originalData?.album_id
       if (albumId) {
-        log('歌曲缺少发行日期，尝试获取专辑信息，album_id:', albumId)
+        log('歌曲缺少元数据，尝试获取专辑信息，album_id:', albumId)
         const albumInfo = await fetchAlbumInfo(albumId)
-        if (albumInfo && albumInfo.publish_date) {
-          songInfo = { ...songInfo, publish_date: albumInfo.publish_date }
-          log('从专辑信息获取发行日期:', songInfo.publish_date)
+        if (albumInfo) {
+          if (albumInfo.publish_date && !songInfo.publish_date) {
+            songInfo = { ...songInfo, publish_date: albumInfo.publish_date }
+            log('从专辑信息获取发行日期:', songInfo.publish_date)
+          }
+          if (albumInfo.name && !songInfo.album_name && !songInfo.album) {
+            songInfo = { ...songInfo, album_name: albumInfo.name, album: albumInfo.name }
+            log('从专辑信息获取专辑名:', albumInfo.name)
+          }
         }
-      } else {
-        log('歌曲缺少 album_id，无法获取发行日期')
+      } else if (hash) {
+        // 没有 album_id，通过 privilege/lite API 补全全部信息
+        log('歌曲缺少 album_id，尝试通过 API 补全信息，hash:', hash)
+        const fetchedInfo = await fetchSongInfo(hash)
+        if (fetchedInfo) {
+          // 只覆盖缺失的字段，不覆盖已有信息
+          const merged = { ...fetchedInfo, ...songInfo }
+          if (!merged.publish_date && fetchedInfo.publish_date) merged.publish_date = fetchedInfo.publish_date
+          if (!merged.album_name && fetchedInfo.album) merged.album_name = fetchedInfo.album
+          if (!merged.album && fetchedInfo.album) merged.album = fetchedInfo.album
+          if (!merged.album_id && fetchedInfo.album_id) merged.album_id = fetchedInfo.album_id
+          songInfo = merged
+          log('API 补全成功:', songInfo.name, '-', songInfo.author, '专辑:', songInfo.album_name || songInfo.album, '发行日期:', songInfo.publish_date)
+        }
       }
     }
     
@@ -564,6 +644,11 @@ function getCoverUrl(song) {
   
   if (song.img && song.img.includes('http')) {
     return song.img.replace(/[`"]/g, '').trim()
+  }
+  
+  // 搜索 API 返回的 Image 字段
+  if (song.Image && song.Image.includes('http')) {
+    return song.Image.replace('{size}', '480').replace(/[`"]/g, '').trim()
   }
   
   if (song.sizable_cover && song.sizable_cover.includes('http')) {

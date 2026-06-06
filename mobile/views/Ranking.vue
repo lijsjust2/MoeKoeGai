@@ -242,7 +242,8 @@ const playSong = (song) => {
             song.songname, 
             proxy.$getCover(song.trans_param.union_cover, 480), 
             song.author_name,
-            song.deprecated.duration || 0
+            song.deprecated.duration || 0,
+            { album_name: song.album_name, album_id: song.album_id, publish_date: song.publish_date }
         );
     } else {
         console.error('Player control is not available');
@@ -395,7 +396,9 @@ const toggleMoreMenu = (song, event) => {
         hash: song.deprecated.hash,
         cover: song.trans_param.union_cover,
         duration: song.deprecated.duration,
-        album_name: song.album_name
+        album_name: song.album_name,
+        album_id: song.album_id,
+        publish_date: song.publish_date
     };
     showMoreMenu.value = true;
     

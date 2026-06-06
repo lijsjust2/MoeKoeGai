@@ -114,14 +114,14 @@
                 <!-- 歌曲搜索结果 -->
                 <ul v-if="searchType === 'song'">
                     <li v-for="(result, index) in searchResults" :key="index" class="result-item"
-                        @click="playSong(result?.HQFileHash || result?.SQFileHash || result?.FileHash, result.OriSongName, getCover(result.Image, 480), result.SingerName, result.Duration || result.duration || 0)">
+                        @click="playSong(result?.HQFileHash || result?.SQFileHash || result?.FileHash, result.OriSongName, getCover(result.Image, 480), result.SingerName, result.Duration || result.duration || 0, { album_name: result.AlbumName, album_id: result.AlbumID, publish_date: result.PublishDate, Image: result.Image, FileHash: result.FileHash, OriSongName: result.OriSongName, SingerName: result.SingerName })">
                         <img :src="getCover(result.Image, 100)" alt="Cover" />
                         <div class="result-info">
                             <p class="result-name">{{ result.OriSongName }}</p>
                             <p class="result-type">{{ result.SingerName }}</p>
                         </div>
                         <div class="song-actions">
-                            <button class="action-btn play-btn" @click.stop="playSong(result?.HQFileHash || result?.SQFileHash || result?.FileHash, result.OriSongName, getCover(result.Image, 480), result.SingerName, result.Duration || result.duration || 0)">
+                            <button class="action-btn play-btn" @click.stop="playSong(result?.HQFileHash || result?.SQFileHash || result?.FileHash, result.OriSongName, getCover(result.Image, 480), result.SingerName, result.Duration || result.duration || 0, { album_name: result.AlbumName, album_id: result.AlbumID, publish_date: result.PublishDate, Image: result.Image, FileHash: result.FileHash, OriSongName: result.OriSongName, SingerName: result.SingerName })">
                                 <i class="fas fa-play"></i>
                             </button>
                             <button class="action-btn more-btn" @click.stop="toggleMoreMenu(result, $event)">
@@ -342,9 +342,9 @@ watch(() => route.query.q, (newQuery) => {
     }
 });
 
-const playSong = (hash, name, img, author, timelen) => {
+const playSong = (hash, name, img, author, timelen, extraData) => {
     if (window.playerControl && window.playerControl.addSongToQueue) {
-        window.playerControl.addSongToQueue(hash, name, img, author, timelen || 0);
+        window.playerControl.addSongToQueue(hash, name, img, author, timelen || 0, extraData);
     } else {
         console.error('Player control is not available');
     }

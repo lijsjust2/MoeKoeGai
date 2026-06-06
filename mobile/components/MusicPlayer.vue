@@ -1359,12 +1359,12 @@ onMounted(() => {
   
   if (typeof window !== 'undefined') {
     window.playerControl = {
-      addSongToQueue: (hash, name, cover, author, timelen) => {
-        const song = { hash, name, img: cover, author, timeLength: timelen }
+      addSongToQueue: (hash, name, cover, author, timelen, extraData) => {
+        const song = { hash, name, img: cover, author, timeLength: timelen, ...(extraData || {}) }
         playSong(song)
       },
-      addToPlaylist: (hash, name, cover, author, timelen) => {
-        const song = { hash, name, img: cover, author, timeLength: timelen }
+      addToPlaylist: (hash, name, cover, author, timelen, extraData) => {
+        const song = { hash, name, img: cover, author, timeLength: timelen, ...(extraData || {}) }
         addToPlaylist(song)
       },
       addPlaylistToQueue: (songs) => {

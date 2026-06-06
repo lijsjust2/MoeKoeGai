@@ -135,7 +135,7 @@
             <div v-else ref="trackListRef" class="track-list">
                 <div v-for="(item, index) in filteredTracks" :key="item.hash"
                     class="li" :class="{ 'selected': selectedTracks.includes(index) }"
-                    @click="batchSelectionMode ? selectTrack(index, $event) : playSong(item.hash, item.name, item.cover, item.author, item.timelen)"
+                    @click="batchSelectionMode ? selectTrack(index, $event) : playSong(item.hash, item.name, item.cover, item.author, item.timelen, { album_name: item.album_name, album_id: item.album_id, publish_date: item.publish_date })"
                     @contextmenu.prevent="showContextMenu($event, item)">
 
                     <!-- 复选框或序号 -->
@@ -161,7 +161,7 @@
                         {{ $formatMilliseconds(item.timelen) }}
                     </div>
                     <div class="track-actions">
-                        <button class="play-btn" @click.stop="playSong(item.hash, item.name, item.cover, item.author, item.timelen)" title="播放">
+                        <button class="play-btn" @click.stop="playSong(item.hash, item.name, item.cover, item.author, item.timelen, { album_name: item.album_name, album_id: item.album_id, publish_date: item.publish_date })" title="播放">
                             <i class="fas fa-play"></i>
                         </button>
                         <button class="more-btn" @click.stop="showContextMenu($event, item)" title="更多操作">
@@ -988,11 +988,11 @@ const searchTracks = async () => {
 };
 
 // 播放歌曲
-const playSong = (hash, name, img, author, timelen) => {
+const playSong = (hash, name, img, author, timelen, extraData) => {
     if (window.playerControl && window.playerControl.addSongToQueue) {
-        window.playerControl.addSongToQueue(hash, name, img, author, timelen);
+        window.playerControl.addSongToQueue(hash, name, img, author, timelen, extraData);
     } else if (props.playerControl && props.playerControl.addSongToQueue) {
-        props.playerControl.addSongToQueue(hash, name, img, author, timelen);
+        props.playerControl.addSongToQueue(hash, name, img, author, timelen, extraData);
     } else {
         console.warn('playerControl is not available');
     }
@@ -1179,7 +1179,7 @@ const handleAddToPlaylist = (song) => {
 
 const handlePlayNow = (song) => {
     if (song) {
-        playSong(song.hash, song.name, song.cover, song.author);
+        playSong(song.hash, song.name, song.cover, song.author, 0, { album_name: song.album_name, album_id: song.album_id, publish_date: song.publish_date });
     }
 };
 
