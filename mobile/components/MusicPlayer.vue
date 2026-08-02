@@ -412,19 +412,21 @@ const getSongArtist = (song) => {
   return song.author || song.author_name || song.singer_name || '未知歌手'
 }
 
-const getSongArtistId = (song) => {
-  console.log('getSongArtistId 调用')
-  console.log('currentAlbum.value:', currentAlbum.value)
-  console.log('currentAlbum.value?.authors:', currentAlbum.value?.authors)
-  console.log('currentAlbum.value?.authors?.[0]?.author_id:', currentAlbum.value?.authors?.[0]?.author_id)
-  console.log('song.singerid:', song.singerid)
-  console.log('song.AuthorId:', song.AuthorId)
-  console.log('song.author_id:', song.author_id)
-  
-  const artistId = currentAlbum.value?.authors?.[0]?.author_id || song.singerid || song.AuthorId || song.author_id || null
-  console.log('最终 artistId:', artistId)
-  
-  return artistId
+const getSongArtistId = async (song) => {
+  // 通过 hash 调用 /images 接口获取准确的 author_id
+  if (song.hash) {
+    try {
+      const res = await get('/images', { hash: song.hash })
+      const author = res?.data?.[0]?.author?.[0]
+      if (author && author.author_id) {
+        return author.author_id
+      }
+    } catch (e) {
+      console.error('获取歌手ID失败:', e)
+    }
+  }
+  // 兜底：使用歌曲自带字段
+  return song.singerid || song.AuthorId || song.author_id || currentAlbum.value?.authors?.[0]?.author_id || null
 }
 
 const getAlbumId = (song) => {
@@ -1069,28 +1071,17 @@ const playSong = (song) => {
   }
 }
 
-const goToArtistDetail = () => {
-  console.log('goToArtistDetail called')
-  console.log('currentSong.value:', currentSong.value)
-  console.log('currentAlbum.value:', currentAlbum.value)
-  
-  if (!currentSong.value) {
-    console.log('currentSong is null')
-    return
-  }
-  
-  const artistId = getSongArtistId(currentSong.value)
-  console.log('artistId:', artistId)
-  
+const goToArtistDetail = async () => {
+  if (!currentSong.value) return
+
+  const artistId = await getSongArtistId(currentSong.value)
+
   if (artistId) {
-    console.log('navigating to artist detail:', artistId)
     closeFullscreen()
     router.push({
       name: 'PlaylistDetail',
       query: { singerid: artistId }
     })
-  } else {
-    console.log('artistId not found')
   }
 }
 

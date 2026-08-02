@@ -13,6 +13,12 @@
                     <span>歌曲: {{ detail.song_count }}</span>
                     <span>专辑: {{ detail.album_count }}</span>
                 </div>
+                <div class="playlist-actions" v-if="isArtist">
+                    <button class="batch-action-btn" @click="goToBatchDownload">
+                        <i class="fas fa-download"></i>
+                        <span>批量下载</span>
+                    </button>
+                </div>
                 <div class="stats" v-if="isAlbum">
                     <span>歌手: {{ detail.author_name }}</span>
                     <span>歌曲: {{ detail.song_count }}</span>
@@ -38,14 +44,6 @@
         <!-- 歌单描述（仅歌单详情显示） -->
         <div v-if="!isArtist && !isAlbum && detail.intro" class="playlist-description">
             {{ detail.intro }}
-        </div>
-
-        <!-- 歌手详情快捷操作（批量下载专辑） -->
-        <div v-if="isArtist" class="artist-quick-actions">
-            <button class="batch-download-album-btn" @click="goToBatchDownloadAlbums">
-                <i class="fas fa-download"></i>
-                <span>批量下载专辑</span>
-            </button>
         </div>
 
         <!-- 标签切换（仅歌手详情显示） -->
@@ -1209,17 +1207,6 @@ const handleQualitySelect = (quality) => {
     console.log('选择音质:', quality.name);
 };
 
-// 跳转到批量下载专辑页面
-const goToBatchDownloadAlbums = () => {
-    const singerId = route.query.singerid;
-    if (singerId) {
-        router.push({
-            path: '/download',
-            query: { singerid: singerId }
-        });
-    }
-};
-
 // 跳转到专辑详情
 const goToAlbumDetail = (album) => {
     console.log('跳转到专辑详情:', album);
@@ -1232,6 +1219,15 @@ const goToAlbumDetail = (album) => {
             }
         });
     }
+};
+
+const goToBatchDownload = () => {
+    router.push({
+        path: '/download',
+        query: {
+            artistId: route.query.singerid
+        }
+    });
 };
 
 
@@ -1530,42 +1526,6 @@ const isCurrentPlaying = (hash) => {
 
 .tab-item i {
     font-size: 14px;
-}
-
-/* 歌手快捷操作区 */
-.artist-quick-actions {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 15px;
-}
-
-.batch-download-album-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 24px;
-    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-    color: white;
-    border: none;
-    border-radius: 24px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
-}
-
-.batch-download-album-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(245, 87, 108, 0.5);
-}
-
-.batch-download-album-btn:active {
-    transform: translateY(0);
-}
-
-.batch-download-album-btn i {
-    font-size: 15px;
 }
 
 /* 专辑列表样式 */

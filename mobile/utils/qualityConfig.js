@@ -2,14 +2,13 @@
 
 // 可用音质列表（按优先级排序）
 export const QUALITY_OPTIONS = [
-    { name: '无损音质', quality: 'high', desc: '无损 High' },
     { name: '无损音质 FLAC', quality: 'flac', desc: 'FLAC' },
     { name: '高品质', quality: '320', desc: '320K MP3' },
     { name: '标准音质', quality: '128', desc: '128K MP3' }
 ];
 
 // 音质降级顺序（从高到低）
-export const QUALITY_FALLBACK_ORDER = ['high', 'flac', '320', '128'];
+export const QUALITY_FALLBACK_ORDER = ['flac', '320', '128'];
 
 // 获取音质显示名称
 export function getQualityDisplayName(quality) {
@@ -22,7 +21,6 @@ export function getQualityDescription(quality) {
     const option = QUALITY_OPTIONS.find(o => o.quality === quality);
     if (option) return option.desc;
     if (quality === 'flac') return '无损 FLAC';
-    if (quality === 'high') return '无损 High';
     const num = Number(quality);
     if (!isNaN(num)) return `${num}K MP3`;
     return quality || '';
@@ -52,7 +50,7 @@ export function getFileExtension(quality, downloadUrl) {
     
     // 根据音质判断
     const qualityLower = (quality || '').toLowerCase();
-    if (qualityLower === 'flac' || qualityLower === 'high' || qualityLower === 'viper_clear') {
+    if (qualityLower === 'flac') {
         return 'flac';
     }
     if (qualityLower === 'ape') {
@@ -68,13 +66,12 @@ export function getFileExtension(quality, downloadUrl) {
 // 判断是否需要登录/VIP 的音质
 export function isPremiumQuality(quality) {
     const q = (quality || '').toLowerCase();
-    return ['high', 'flac'].includes(q);
+    return ['flac'].includes(q);
 }
 
 // 获取音质图标颜色
 export function getQualityIconColor(quality) {
     const q = (quality || '').toLowerCase();
-    if (q === 'high') return '#e94560';
     if (q === 'flac') return '#16a085';
     if (q === '320') return '#667eea';
     return '#95a5a6';

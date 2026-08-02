@@ -294,28 +294,6 @@ watch(pushplusToken, (newValue) => {
     savePushplusToken(newValue);
 });
 
-// 组件挂载时检查路由参数，自动带入歌手ID并查询
-onMounted(() => {
-    const singerId = route.query.singerid;
-    if (singerId) {
-        artistId.value = String(singerId);
-        // 延迟一点确保 DOM 和 store 初始化完成
-        setTimeout(() => {
-            queryArtist();
-        }, 100);
-    }
-});
-
-// 监听路由参数变化（从歌详情页再次跳转时）
-watch(() => route.query.singerid, (newSingerId) => {
-    if (newSingerId && String(newSingerId) !== artistId.value) {
-        artistId.value = String(newSingerId);
-        setTimeout(() => {
-            queryArtist();
-        }, 100);
-    }
-});
-
 // 监听下载延时配置变化，自动保存到 localStorage
 watch([downloadDelayMin, downloadDelayMax], ([newMin, newMax]) => {
     // 确保最小值不大于最大值
@@ -633,6 +611,13 @@ const queryArtist = async () => {
         querying.value = false;
     }
 };
+
+// 监听路由参数变化，自动填入歌手ID（不自动查询，由用户手动点击）
+watch(() => route.query.artistId, (newArtistId) => {
+    if (newArtistId) {
+        artistId.value = String(newArtistId);
+    }
+}, { immediate: true });
 
 // 后台加载所有专辑的歌曲
 const loadAlbumSongsInBackground = async (rawAlbums) => {

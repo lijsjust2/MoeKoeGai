@@ -298,9 +298,9 @@ const displayCover = computed(() => {
 const displayQualities = computed(() => {
   if (!props.qualities || props.qualities.length === 0) {
     return [
-      { name: '标准音质', quality: '128' },
+      { name: '无损音质 FLAC', quality: 'flac' },
       { name: '高品质', quality: '320' },
-      { name: '无损音质', quality: 'flac' }
+      { name: '标准音质', quality: '128' }
     ]
   }
   return props.qualities
