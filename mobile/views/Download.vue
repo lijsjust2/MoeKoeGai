@@ -5,26 +5,106 @@
             <p>输入歌手ID，查询并下载该歌手的所有歌曲</p>
         </div>
 
-        <!-- 第一步：查询歌手 -->
+        <!-- 第一步：查询歌手（含筛选条件） -->
         <div class="config-section">
             <div class="input-group">
                 <label>歌手ID</label>
                 <div class="input-with-button">
-                    <input 
-                        v-model="artistId" 
-                        type="text" 
+                    <input
+                        v-model="artistId"
+                        type="text"
                         placeholder="请输入歌手ID（例如：3520）"
                         class="input-field"
                         @keyup.enter="queryArtist"
                     />
-                    <button 
-                        @click="queryArtist" 
+                    <button
+                        @click="queryArtist"
                         :disabled="querying || !artistId"
                         class="btn btn-query"
                     >
                         <i class="fas fa-search"></i>
                         {{ querying ? '查询中...' : '查询歌手' }}
                     </button>
+                </div>
+            </div>
+
+            <!-- 筛选条件（查询前设置） -->
+            <div class="pre-query-filters">
+                <div class="filter-group-head">
+                    <div class="group-title">
+                        <i class="fas fa-calendar-alt group-icon"></i>
+                        <span>发行日期范围</span>
+                        <span class="group-tag" v-if="dateFrom || dateTo">已设置</span>
+                        <span class="group-tag group-tag-muted" v-else>可选</span>
+                    </div>
+                    <div class="quick-range-chips">
+                        <button class="chip" @click="setQuickRange(1)">近1年</button>
+                        <button class="chip" @click="setQuickRange(3)">近3年</button>
+                        <button class="chip" @click="setQuickRange(5)">近5年</button>
+                        <button class="chip" @click="setQuickRange(10)">近10年</button>
+                        <button class="chip chip-danger" @click="clearDateRange" v-if="dateFrom || dateTo">
+                            <i class="fas fa-times-circle"></i> 清空
+                        </button>
+                    </div>
+                </div>
+
+                <div class="date-range-card">
+                    <div class="date-slot" :class="{ filled: !!dateFrom }">
+                        <div class="date-slot-label">
+                            <i class="fas fa-play-circle slot-icon start-icon"></i>
+                            <span>起始日期</span>
+                        </div>
+                        <CustomDatePicker
+                            v-model="dateFrom"
+                            placeholder="请选择开始日期"
+                            :max-date="dateTo"
+                        />
+                    </div>
+
+                    <div class="date-arrow">
+                        <i class="fas fa-arrow-right"></i>
+                    </div>
+
+                    <div class="date-slot" :class="{ filled: !!dateTo }">
+                        <div class="date-slot-label">
+                            <i class="fas fa-flag-checkered slot-icon end-icon"></i>
+                            <span>结束日期</span>
+                        </div>
+                        <CustomDatePicker
+                            v-model="dateTo"
+                            placeholder="请选择结束日期"
+                            :min-date="dateFrom"
+                        />
+                    </div>
+                </div>
+
+                <div class="filter-divider"></div>
+
+                <div class="filter-row checkbox-filter-row">
+                    <div class="group-title inline-title">
+                        <i class="fas fa-filter group-icon"></i>
+                        <span>专辑排除规则</span>
+                    </div>
+                    <label class="checkbox-label checkbox-card" :class="{ active: excludeConcert }">
+                        <div class="checkbox-card-inner">
+                            <input type="checkbox" v-model="excludeConcert" />
+                            <i class="fas fa-microphone-alt"></i>
+                            <div class="card-text">
+                                <span class="card-title">排除演唱会</span>
+                                <span class="card-sub">名称含"演唱会"的专辑不显示</span>
+                            </div>
+                        </div>
+                    </label>
+                    <label class="checkbox-label checkbox-card" :class="{ active: excludeLive }">
+                        <div class="checkbox-card-inner">
+                            <input type="checkbox" v-model="excludeLive" />
+                            <i class="fas fa-broadcast-tower"></i>
+                            <div class="card-text">
+                                <span class="card-title">排除 Live 版本</span>
+                                <span class="card-sub">名称含"Live / LIVE"的专辑不显示</span>
+                            </div>
+                        </div>
+                    </label>
                 </div>
             </div>
 
@@ -165,19 +245,6 @@
                 </div>
                 
                 <div class="config-grid">
-                    <div class="filter-options">
-                        <label class="checkbox-label">
-                            <input type="checkbox" v-model="excludeConcert" />
-                            <i class="fas fa-microphone-alt"></i>
-                            <span>排除演唱会</span>
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" v-model="excludeLive" />
-                            <i class="fas fa-broadcast-tower"></i>
-                            <span>排除Live版本</span>
-                        </label>
-                    </div>
-                    
                     <!-- PushPlus 推送配置 -->
                     <div class="pushplus-config">
                         <label class="input-label">
@@ -260,15 +327,41 @@ import { ref, computed, watch, onMounted } from 'vue';
 import { get } from '../utils/request';
 import { useRoute } from 'vue-router';
 import BatchDownloadManager from '../components/BatchDownloadManager.vue';
+import CustomDatePicker from '../components/CustomDatePicker.vue';
 import { savePushplusToken, getPushplusToken, sendPushNotification, formatLogsForPush } from '../utils/pushplus';
 
 const route = useRoute();
 
 // 状态变量
 const artistId = ref('');
-const excludeConcert = ref(true);
-const excludeLive = ref(true);
+const excludeConcert = ref(localStorage.getItem('download_exclude_concert') !== 'false');
+const excludeLive = ref(localStorage.getItem('download_exclude_live') !== 'false');
+const dateFrom = ref(localStorage.getItem('download_date_from') || '');
+const dateTo = ref(localStorage.getItem('download_date_to') || '');
 const querying = ref(false);
+
+// ===== 快捷日期范围 =====
+const formatDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+// 设置近 N 年的日期范围（从今天往前推 N 年 - 今天）
+const setQuickRange = (years) => {
+    const end = new Date();
+    const start = new Date();
+    start.setFullYear(end.getFullYear() - years);
+    dateTo.value = formatDateStr(end);
+    dateFrom.value = formatDateStr(start);
+};
+
+const clearDateRange = () => {
+    dateFrom.value = '';
+    dateTo.value = '';
+};
+
 const albums = ref([]);
 const selectedAlbums = ref(new Set());
 const albumSongMap = ref(new Map());
@@ -293,6 +386,12 @@ const queryStatus = ref('');
 watch(pushplusToken, (newValue) => {
     savePushplusToken(newValue);
 });
+
+// 监听筛选条件变化，自动保存到 localStorage
+watch(excludeConcert, (v) => localStorage.setItem('download_exclude_concert', String(v)));
+watch(excludeLive, (v) => localStorage.setItem('download_exclude_live', String(v)));
+watch(dateFrom, (v) => localStorage.setItem('download_date_from', v || ''));
+watch(dateTo, (v) => localStorage.setItem('download_date_to', v || ''));
 
 // 监听下载延时配置变化，自动保存到 localStorage
 watch([downloadDelayMin, downloadDelayMax], ([newMin, newMax]) => {
@@ -370,7 +469,7 @@ const formatDuration = (seconds) => {
     return `${mins}:${remainingSecs.toString().padStart(2, '0')}`;
 };
 
-// 检查是否应该排除
+// 检查是否应该排除（歌曲级别，用于后续下载时二次过滤）
 const shouldExclude = (songName, albumName) => {
     const name = (songName || '').toLowerCase();
     const album = (albumName || '').toLowerCase();
@@ -384,6 +483,58 @@ const shouldExclude = (songName, albumName) => {
     }
     
     return false;
+};
+
+// 解析专辑发行日期字符串为 Date 对象
+const parseAlbumDate = (dateStr) => {
+    if (!dateStr) return null;
+    const match = String(dateStr).match(/(\d{4})[-./]?(\d{1,2})?[-./]?(\d{1,2})?/);
+    if (match) {
+        const year = parseInt(match[1]);
+        const month = match[2] ? parseInt(match[2]) - 1 : 0;
+        const day = match[3] ? parseInt(match[3]) : 1;
+        return new Date(year, month, day);
+    }
+    return null;
+};
+
+// 根据查询前设置的筛选条件过滤专辑列表
+const filterAlbumsByConditions = (rawAlbums) => {
+    return rawAlbums.filter(album => {
+        const albumName = (album.album_name || '').toLowerCase();
+        
+        // 排除演唱会
+        if (excludeConcert.value && albumName.includes('演唱会')) {
+            return false;
+        }
+        
+        // 排除 Live
+        if (excludeLive.value && albumName.includes('live')) {
+            return false;
+        }
+        
+        // 发行日期范围过滤
+        if (dateFrom.value || dateTo.value) {
+            const dateStr = album.publish_date || album.publish_time || '';
+            const albumDate = parseAlbumDate(dateStr);
+            // 没有日期信息的专辑，如果用户设置了日期范围，则排除
+            if (!albumDate) return false;
+            
+            if (dateFrom.value) {
+                const fromDate = new Date(dateFrom.value);
+                fromDate.setHours(0, 0, 0, 0);
+                if (albumDate < fromDate) return false;
+            }
+            
+            if (dateTo.value) {
+                const toDate = new Date(dateTo.value);
+                toDate.setHours(23, 59, 59, 999);
+                if (albumDate > toDate) return false;
+            }
+        }
+        
+        return true;
+    });
 };
 
 // 获取歌手所有专辑
@@ -589,15 +740,29 @@ const queryArtist = async () => {
         
         addLog(`找到 ${rawAlbums.length} 个专辑`, 'success', 'fas fa-check-circle');
         
+        // 根据查询前设置的筛选条件过滤专辑
+        const filteredAlbums = filterAlbumsByConditions(rawAlbums);
+        if (filteredAlbums.length < rawAlbums.length) {
+            addLog(`筛选后剩余 ${filteredAlbums.length} 个专辑（已排除 ${rawAlbums.length - filteredAlbums.length} 个）`, 'info', 'fas fa-filter');
+        }
+        
+        if (filteredAlbums.length === 0) {
+            addLog('筛选后没有符合条件的专辑，请调整筛选条件后重新查询', 'warning', 'fas fa-exclamation-triangle');
+            queryStatus.value = '筛选后无结果';
+            queryProgress.value = 100;
+            querying.value = false;
+            return;
+        }
+        
         // 按发布时间新到旧排序
-        rawAlbums.sort((a, b) => {
+        filteredAlbums.sort((a, b) => {
             const dateA = a.publish_date || a.publish_time || '';
             const dateB = b.publish_date || b.publish_time || '';
             return String(dateB).localeCompare(String(dateA));
         });
         
         // 初始化专辑数据（设置 songCount 为 undefined，等后台加载后更新）
-        albums.value = rawAlbums.map(a => ({
+        albums.value = filteredAlbums.map(a => ({
             ...a,
             songCount: undefined
         }));
@@ -607,7 +772,7 @@ const queryArtist = async () => {
         addLog('✅ 专辑列表已显示，后台正在获取歌曲信息...', 'info', 'fas fa-hourglass-half');
         
         // 后台并发加载每个专辑的歌曲
-        await loadAlbumSongsInBackground(rawAlbums);
+        await loadAlbumSongsInBackground(filteredAlbums);
         
     } catch (error) {
         addLog(`查询失败: ${error.message}`, 'error', 'fas fa-exclamation-circle');
@@ -907,6 +1072,379 @@ const handleDownloadComplete = async (result) => {
     padding: 15px;
     background: rgba(255, 255, 255, 0.1);
     border-radius: 8px;
+}
+
+/* 查询前筛选条件 - 全新UI */
+.pre-query-filters {
+    margin-top: 22px;
+    padding: 24px 22px;
+    background: linear-gradient(
+        145deg,
+        rgba(255, 255, 255, 0.10) 0%,
+        rgba(255, 255, 255, 0.05) 100%
+    );
+    backdrop-filter: blur(12px);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow:
+        0 10px 40px rgba(0, 0, 0, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* 分组标题 */
+.filter-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.group-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 1.05em;
+    letter-spacing: 0.2px;
+}
+
+.inline-title {
+    font-size: 1em;
+    margin-right: 4px;
+}
+
+.group-icon {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: #fff;
+    border-radius: 9px;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+}
+
+.group-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    background: linear-gradient(135deg, #22c55e, #10b981);
+    color: #fff;
+    border-radius: 999px;
+    letter-spacing: 0.5px;
+}
+
+.group-tag-muted {
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 快捷范围按钮 */
+.quick-range-chips {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.chip {
+    padding: 6px 13px;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.82);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.22s ease;
+}
+
+.chip:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.5), rgba(118, 75, 162, 0.5));
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.chip-danger {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.chip-danger:hover {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.55), rgba(244, 63, 94, 0.55));
+    border-color: rgba(254, 202, 202, 0.55);
+    color: #fff;
+}
+
+/* 日期选择器卡片主体 */
+.date-range-card {
+    display: flex;
+    align-items: stretch;
+    gap: 18px;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.date-slot {
+    flex: 1;
+    min-width: 220px;
+    padding: 16px 18px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    transition: all 0.28s ease;
+    position: relative;
+}
+
+.date-slot:hover {
+    border-color: rgba(102, 126, 234, 0.55);
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.date-slot.filled {
+    background: linear-gradient(
+        145deg,
+        rgba(102, 126, 234, 0.28) 0%,
+        rgba(118, 75, 162, 0.22) 100%
+    );
+    border-color: rgba(102, 126, 234, 0.55);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.date-slot-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-bottom: 11px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.slot-icon {
+    font-size: 13px;
+}
+
+.start-icon {
+    color: #6ee7b7;
+}
+
+.end-icon {
+    color: #fca5a5;
+}
+
+/* date-slot 已有 filled 状态，CustomDatePicker 组件自带触发器样式 */
+
+/* 美化显示的日期（保留用于 date-slot 状态参考） */
+.date-display .year {
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    background: linear-gradient(135deg, #c4b5fd, #f0abfc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.date-display .dash {
+    margin: 0 2px;
+    opacity: 0.4;
+    font-size: 16px;
+}
+
+.date-display .md {
+    font-size: 14.5px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.date-display.placeholder {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.35);
+    padding: 8px 2px 0;
+    font-style: italic;
+    -webkit-text-fill-color: rgba(255, 255, 255, 0.35);
+}
+
+/* 中间箭头 */
+.date-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 2px;
+    color: rgba(167, 139, 250, 0.7);
+    font-size: 20px;
+    animation: dateArrowPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes dateArrowPulse {
+    0%, 100% { transform: translateX(0); opacity: 0.5; }
+    50% { transform: translateX(3px); opacity: 1; }
+}
+
+/* 分隔线 */
+.filter-divider {
+    height: 1px;
+    margin: 24px 0 20px;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.18) 50%,
+        transparent 100%
+    );
+}
+
+/* 排除规则 - 切换成卡片风格 */
+.filter-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.checkbox-filter-row {
+    gap: 14px;
+}
+
+.checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* 全新卡片式checkbox */
+.checkbox-card {
+    flex: 1 1 280px;
+    min-width: 260px;
+    padding: 0;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.2);
+    transition: all 0.28s ease;
+}
+
+.checkbox-card:hover {
+    border-color: rgba(251, 146, 60, 0.45);
+    transform: translateY(-1px);
+    background: rgba(0, 0, 0, 0.28);
+}
+
+.checkbox-card.active {
+    border-color: rgba(251, 146, 60, 0.75);
+    background: linear-gradient(
+        145deg,
+        rgba(251, 146, 60, 0.22) 0%,
+        rgba(236, 72, 153, 0.18) 100%
+    );
+    box-shadow:
+        0 6px 24px rgba(251, 146, 60, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.checkbox-card-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+}
+
+.checkbox-card-inner i {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.8);
+    flex-shrink: 0;
+}
+
+.checkbox-card.active .checkbox-card-inner i {
+    background: linear-gradient(135deg, #fb923c, #f472b6);
+    color: #fff;
+}
+
+.card-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.card-title {
+    font-weight: 700;
+    font-size: 14.5px;
+    color: #fff;
+}
+
+.card-sub {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.3;
+}
+
+.checkbox-card input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    accent-color: #fb923c;
+    flex-shrink: 0;
+    margin: 0;
+}
+
+/* ====== 移动端适配 ====== */
+@media (max-width: 680px) {
+    .pre-query-filters {
+        padding: 18px 14px;
+        border-radius: 14px;
+    }
+    .filter-group-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .date-range-card {
+        flex-direction: column;
+        gap: 12px;
+        padding: 14px;
+    }
+    .date-arrow {
+        padding: 4px 0;
+        transform: rotate(90deg);
+    }
+    .date-arrow { animation: none; }
+    .date-slot {
+        min-width: 0;
+        padding: 14px;
+    }
+    .date-display .year {
+        font-size: 19px;
+    }
+    .checkbox-filter-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .checkbox-card {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
 }
 
 .progress-bar {
