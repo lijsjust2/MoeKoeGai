@@ -93,17 +93,29 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { get } from '../utils/request';
 import { MoeAuthStore } from '../stores/store';
 import QualityModal from './QualityModal.vue';
 import { downloadWithMetadata } from '../utils/metadata';
+import { pickDownloadDirectory, saveBlobToDirectory, isFileSystemAccessSupported } from '../utils/fsDownload';
 import { 
     QUALITY_OPTIONS, 
     QUALITY_FALLBACK_ORDER, 
     getFileExtension,
     getQualityDescription
 } from '../utils/qualityConfig';
+
+const sanitizeFileName = (name) => {
+    if (!name) return '未知';
+    return String(name)
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+};
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const MoeAuth = MoeAuthStore();
 
@@ -158,6 +170,9 @@ const currentSongName = ref('');
 const selectedQuality = ref(null);
 const showResultModal = ref(false);
 const isCancelled = ref(false);
+const downloadDirHandle = ref(null);
+const isPickingDirectory = ref(false);
+const useFileSystemAccess = ref(isFileSystemAccessSupported());
 const downloadResults = ref({
     success: [],
     failed: []
@@ -217,10 +232,55 @@ const handleQualitySelect = async (quality) => {
         console.warn('已有下载任务在进行中，跳过重复请求');
         return;
     }
+    if (isPickingDirectory.value) {
+        console.warn('目录选择对话框已打开，跳过重复请求');
+        return;
+    }
     
     selectedQuality.value = quality;
     
     if (props.songs.length === 0) return;
+    
+    // 等待 QualityModal 的 DOM 和过渡动画完全卸载，
+    // 避免和 showDirectoryPicker 抢占浏览器 picker 激活态
+    await nextTick();
+    await sleep(500);
+    
+    // 使用 File System Access API：一次性选择下载目录，后续自动创建歌手/专辑文件夹
+    // dirHandle 会缓存，本页面生命周期内下次批量下载不再重复询问用户
+    if (useFileSystemAccess.value && !downloadDirHandle.value) {
+        try {
+            isPickingDirectory.value = true;
+            console.log('[BatchDownload] 请选择下载根目录（首次使用需要授权，后续自动复用）');
+            downloadDirHandle.value = await pickDownloadDirectory();
+            console.log('[BatchDownload] 已选择下载根目录，将自动创建 歌手/专辑 子文件夹:', downloadDirHandle.value.name);
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                console.log('用户取消了目录选择，已中止批量下载');
+                return;
+            }
+            // 碰到 File picker already active：自动重试一次
+            if (err.name === 'NotAllowedError' && /already active/i.test(err.message)) {
+                console.warn('[BatchDownload] 目录选择器冲突，延时 800ms 后重试一次...');
+                try {
+                    await sleep(800);
+                    downloadDirHandle.value = await pickDownloadDirectory();
+                } catch (retryErr) {
+                    if (retryErr.name === 'AbortError') return;
+                    console.error('重试选择目录失败:', retryErr);
+                    console.warn('将回退为浏览器原生下载（不会自动创建子文件夹）');
+                    useFileSystemAccess.value = false;
+                    downloadDirHandle.value = null;
+                }
+            } else {
+                console.error('选择目录失败，回退为浏览器原生下载:', err);
+                useFileSystemAccess.value = false;
+                downloadDirHandle.value = null;
+            }
+        } finally {
+            isPickingDirectory.value = false;
+        }
+    }
     
     isDownloading.value = true;
     isCancelled.value = false;
@@ -283,6 +343,7 @@ const handleQualitySelect = async (quality) => {
     
     isDownloading.value = false;
     currentSongName.value = '';
+    // 注意：保留 downloadDirHandle.value 不清理，后续下载直接复用用户授权过的目录
     
     if (downloadResults.value.success.length > 0 || downloadResults.value.failed.length > 0) {
         showResultModal.value = true;
@@ -338,32 +399,54 @@ const downloadSong = async (song, quality) => {
             }
             
             const downloadUrl = response.url[0];
-            const fileExt = getFileExtension(currentQuality, downloadUrl);
+            const fileExtHint = getFileExtension(currentQuality, downloadUrl);
             
-            console.log('[BatchDownload] 下载URL:', downloadUrl, '检测格式:', fileExt);
+            console.log('[BatchDownload] 下载URL:', downloadUrl, '推测格式:', fileExtHint);
             
             const coverUrl = song.cover || song.img || song.sizable_cover || song.album_info?.sizable_cover;
             
             const result = await downloadWithMetadata(song, downloadUrl, { 
                 coverUrl,
                 hash: hash,
-                quality: currentQuality,
-                forceExt: fileExt
+                quality: currentQuality
             });
             
             if (!result.success || !result.outputBlob) {
                 throw new Error(result.message || '下载失败');
             }
             
+            const songInfo = result.songInfo || {};
+            const artist = sanitizeFileName(songInfo.author || song.author || song.singer_name || '未知歌手');
+            const album = sanitizeFileName(songInfo.album || song.album || song.album_name || '未知专辑');
+            const safeFileName = sanitizeFileName(result.fileName);
+            
+            // 主流程：File System Access API — 真正在用户选的目录下创建 歌手/专辑 子文件夹
+            if (useFileSystemAccess.value && downloadDirHandle.value) {
+                const savedPath = await saveBlobToDirectory(
+                    result.outputBlob,
+                    downloadDirHandle.value,
+                    artist,
+                    album,
+                    safeFileName
+                );
+                console.log('[BatchDownload] ✓ 文件已保存到:', savedPath);
+                return;
+            }
+            
+            // 回退：浏览器原生下载（无法创建子文件夹，把路径拼到文件名里用下划线分隔，至少分类信息能保留）
+            const fallbackName = `${artist}-${album}-${safeFileName}`;
             const url = window.URL.createObjectURL(result.outputBlob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = result.fileName;
+            link.download = fallbackName;
+            link.rel = 'noopener';
             link.style.display = 'none';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
+            
+            console.log('[BatchDownload] 已触发原生下载（不支持自动建文件夹）:', fallbackName);
             
             return;
             

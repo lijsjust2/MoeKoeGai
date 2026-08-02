@@ -944,6 +944,7 @@ const loadMoreTracks = async () => {
         }
     } catch (error) {
         console.error('加载更多歌曲失败:', error);
+        hasMore.value = false; // 出错时停止继续加载，防止循环重试
     } finally {
         isLoadingMore.value = false;
         // 加载完成后继续检查是否需要加载更多以保持3页缓冲

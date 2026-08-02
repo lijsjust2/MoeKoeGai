@@ -424,7 +424,7 @@ const fetchArtistAlbums = async (id) => {
 };
 
 // 获取专辑中的所有歌曲
-const fetchAlbumSongs = async (albumId, albumName) => {
+const fetchAlbumSongs = async (albumId, albumName, publishDate) => {
     const allSongs = [];
     let page = 1;
     let hasMore = true;
@@ -462,8 +462,11 @@ const fetchAlbumSongs = async (albumId, albumName) => {
                                 name: base.audio_name || track.audio_name || '未知歌曲',
                                 songname: base.audio_name || '',
                                 audio_name: base.audio_name || '',
+                                album_id: String(albumId),
                                 albumId: albumId,
                                 albumName: albumName || albumInfo?.album_name || '未知专辑',
+                                album_name: albumName || albumInfo?.album_name || '未知专辑',
+                                publish_date: publishDate || albumInfo?.publish_date || '',
                                 duration: audioInfo.duration || 0,
                                 timelen: audioInfo.duration || 0,
                                 cover: coverUrl,
@@ -524,8 +527,11 @@ const fetchAlbumSongs = async (albumId, albumName) => {
                                     return {
                                         hash: audioInfo.hash || '',
                                         name: base.audio_name || track.audio_name || '未知歌曲',
+                                        album_id: String(albumId),
                                         albumId: albumId,
                                         albumName: albumName,
+                                        album_name: albumName,
+                                        publish_date: publishDate || albumInfo?.publish_date || '',
                                         duration: audioInfo.duration || 0,
                                         timelen: audioInfo.duration || 0,
                                         cover: coverUrl,
@@ -635,7 +641,7 @@ const loadAlbumSongsInBackground = async (rawAlbums) => {
     
     await parallelLimit(
         rawAlbums.map((album) => async () => {
-            const albumSongs = await fetchAlbumSongs(album.album_id, album.album_name);
+            const albumSongs = await fetchAlbumSongs(album.album_id, album.album_name, album.publish_date || album.publish_time || '');
             
             // 存储歌曲
             const map = new Map(albumSongMap.value);
@@ -745,7 +751,7 @@ const handleDownloadComplete = async (result) => {
     if (cancelled) {
         addLog(`⛔ 下载已取消，已下载 ${successCount} 首，失败 ${failedCount} 首`, 'warning', 'fas fa-exclamation-triangle');
     } else {
-        addLog(`下载完成！共 ${totalCount} 首歌曲，成功 ${successCount} 首，失败 ${failedCount} 首，音质: ${quality}`, 'success', 'fas fa-check-circle');
+        addLog(`下载完成！共 ${totalCount} 首歌曲，成功 ${successCount} 首，失败 ${failedCount} 首，音质: ${quality?.desc || quality?.name || quality}`, 'success', 'fas fa-check-circle');
     }
     
     // 如果有 PushPlus Token，发送推送
@@ -754,7 +760,7 @@ const handleDownloadComplete = async (result) => {
             addLog('正在发送 PushPlus 推送...', 'info', 'fas fa-paper-plane');
             
             // 构建精简的推送内容
-            let content = `总下载歌曲：${totalCount}首，音质${quality}\n`;
+            let content = `总下载歌曲：${totalCount}首，音质${quality?.desc || quality?.name || quality}\n`;
             content += `成功下载${successCount}首，失败${failedCount}首\n\n`;
             
             // 成功下载的明细

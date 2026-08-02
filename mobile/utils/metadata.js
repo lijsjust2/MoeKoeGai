@@ -651,16 +651,45 @@ export async function downloadWithMetadata(song, downloadUrl, options = {}) {
     
     const metadataResult = await embedMusicMetadata(audioBlob, songInfo, coverUrl, lyrics, quality)
     
-    let fileExt = 'mp3'
-    
-    // 1. 如果有强制指定的扩展名，直接使用
-    if (options.forceExt) {
-      fileExt = options.forceExt
-      log('使用强制指定的文件扩展名:', fileExt)
+    // 根据真实音频二进制内容的魔数判断格式，优先于 URL 和 quality 猜测
+    // 这样即便 CDN 跳转或代理转换了格式，也能得到正确的扩展名
+    const detectExtByMagic = async (blob) => {
+      if (!blob || blob.size < 12) return null
+      const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer())
+      // FLAC: "fLaC" at offset 0
+      if (header[0] === 0x66 && header[1] === 0x4C && header[2] === 0x61 && header[3] === 0x43) {
+        return 'flac'
+      }
+      // WAV: "RIFF" + "WAVE"
+      if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46
+        && header[8] === 0x57 && header[9] === 0x41 && header[10] === 0x56 && header[11] === 0x45) {
+        return 'wav'
+      }
+      // APE: "MAC "
+      if (header[0] === 0x4D && header[1] === 0x41 && header[2] === 0x43 && header[3] === 0x20) {
+        return 'ape'
+      }
+      // MP3: ID3 (开头)，或 0xFFF 帧同步 (前 11 bit = 1)
+      if (header[0] === 0x49 && header[1] === 0x44 && header[2] === 0x33) {
+        return 'mp3'
+      }
+      if ((header[0] === 0xFF) && (header[1] & 0xE0) === 0xE0) {
+        return 'mp3'
+      }
+      return null
     }
     
-    // 2. 优先从下载 URL 判断真实文件格式（酷我返回的 URL 包含后缀）
-    if (!options.forceExt && downloadUrl) {
+    let fileExt = 'mp3'
+    const magicExt = await detectExtByMagic(audioBlob)
+    if (magicExt) {
+      fileExt = magicExt
+      log('从二进制魔数检测到真实文件格式:', fileExt)
+    } else if (options.forceExt) {
+      // 1. 如果有强制指定的扩展名（兜底用）
+      fileExt = options.forceExt
+      log('使用强制指定的文件扩展名:', fileExt)
+    } else if (downloadUrl) {
+      // 2. 再从下载 URL 猜测
       const match = downloadUrl.match(/\.(flac|ape|wav|mp3|mkv)(\?|$)/i)
       if (match) {
         fileExt = match[1].toLowerCase()
@@ -668,8 +697,8 @@ export async function downloadWithMetadata(song, downloadUrl, options = {}) {
       }
     }
     
-    // 3. 如果 URL 没有明确后缀，使用 quality 判断
-    if (!options.forceExt && fileExt === 'mp3') {
+    // 3. URL 也没有，再根据 quality 兜底
+    if (fileExt === 'mp3') {
       const qualityLower = (quality || '').toLowerCase()
       if (['flac', 'high', 'viper_clear'].includes(qualityLower)) {
         fileExt = 'flac'
@@ -679,7 +708,7 @@ export async function downloadWithMetadata(song, downloadUrl, options = {}) {
         fileExt = 'wav'
       }
     }
-    log('文件扩展名:', fileExt, '音质:', quality)
+    log('最终文件扩展名:', fileExt, '音质:', quality)
     
     const songName = getSongName(songInfo)
     const artistName = getSongArtist(songInfo)
@@ -691,7 +720,14 @@ export async function downloadWithMetadata(song, downloadUrl, options = {}) {
       success: metadataResult.success,
       outputBlob: metadataResult.outputBlob,
       fileName: fileName,
-      message: metadataResult.message
+      message: metadataResult.message,
+      songInfo: {
+        name: songInfo.name,
+        author: songInfo.author,
+        album: songInfo.album || songInfo.album_name,
+        album_id: songInfo.album_id,
+        publish_date: songInfo.publish_date
+      }
     }
   } catch (error) {
     logError('下载失败:', error)

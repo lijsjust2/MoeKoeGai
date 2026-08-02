@@ -10,6 +10,7 @@
   "dependencies": {
     "axios": "^1.13.4",
     "browser-id3-writer": "^6.3.1",
+    "jszip": "^3.10.1",
     "metaflac-browser-js": "^1.1.4",
     "music-metadata": "^7.14.0",
     "pinia": "^3.0.0",
