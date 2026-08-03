@@ -1,19 +1,25 @@
-# Stage 1: Build Mobile Frontend (auto platform)
+# Stage 1: Build Mobile Frontend (build platform, avoids QEMU for npm install)
 FROM --platform=$BUILDPLATFORM node:20-alpine AS mobile-builder
 WORKDIR /app
 COPY mobile ./mobile
 RUN cd mobile && npm install && npm run build
 
-# Stage 2: Setup Combined App (auto platform)
+# Stage 2: Install API dependencies (build platform, avoids QEMU for npm install)
+# 依赖均为纯 JS 包，可安全跨架构复制到目标镜像
+FROM --platform=$BUILDPLATFORM node:20-alpine AS api-builder
+WORKDIR /app
+COPY KuGouMusicApi ./KuGouMusicApi
+RUN cd KuGouMusicApi && npm install --production
+
+# Stage 3: Setup Combined App (target platform)
 FROM node:20-alpine AS base
 WORKDIR /app
 
 # Install Nginx
 RUN apk add --no-cache nginx
 
-# Copy API and install dependencies
-COPY KuGouMusicApi ./KuGouMusicApi
-RUN cd KuGouMusicApi && npm install --production
+# Copy API with pre-installed dependencies (from build platform to avoid QEMU)
+COPY --from=api-builder /app/KuGouMusicApi ./KuGouMusicApi
 
 # Copy built mobile frontend static assets from the mobile builder stage
 COPY --from=mobile-builder /app/mobile/dist/ ./mobile-dist/
