@@ -20,85 +20,108 @@
             <i class="fas fa-chevron-down cdp-arrow" :class="{ rotated: showPanel }"></i>
         </div>
 
-        <!-- 日历面板 -->
-        <transition name="cdp-fade">
-            <div class="cdp-panel" v-if="showPanel" @click.stop>
-                <!-- 头部：年月导航 -->
-                <div class="cdp-header">
-                    <button class="cdp-nav-btn" @click="changeMonth(-1)" type="button">
-                        <i class="fas fa-chevron-left"></i>
-                    </button>
-                    <div class="cdp-title" @click="toggleYearPicker">
-                        <span class="cdp-month">{{ monthNames[viewMonth] }}</span>
-                        <span class="cdp-year">{{ viewYear }}</span>
-                        <i class="fas fa-caret-down cdp-year-caret" v-if="!showYearPicker"></i>
-                    </div>
-                    <button class="cdp-nav-btn" @click="changeMonth(1)" type="button">
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
-                </div>
+        <!-- 日历面板（使用 Teleport 避免被父容器遮挡） -->
+        <teleport to="body">
+            <transition name="cdp-fade">
+                <div ref="panelRef" class="cdp-panel" v-if="showPanel" @click.stop :style="panelStyle">
+                    <!-- 中间可滚动区域 -->
+                    <div class="cdp-body">
+                        <!-- 头部：年月导航 -->
+                        <div class="cdp-header">
+                            <button class="cdp-nav-btn" @click="changeMonth(-1)" type="button">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <div class="cdp-title" @click="toggleYearPicker">
+                                <span class="cdp-month">{{ monthNames[viewMonth] }}</span>
+                                <span class="cdp-year">{{ viewYear }}</span>
+                                <i class="fas fa-caret-down cdp-year-caret" v-if="!showYearPicker"></i>
+                            </div>
+                            <button class="cdp-nav-btn" @click="changeMonth(1)" type="button">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
 
-                <!-- 年份快速选择 -->
-                <transition name="cdp-fade">
-                    <div class="cdp-year-picker" v-if="showYearPicker">
-                        <button
-                            v-for="y in yearList"
-                            :key="y"
-                            class="cdp-year-item"
-                            :class="{ selected: y === viewYear }"
-                            @click="selectYear(y)"
-                            type="button"
-                        >
-                            {{ y }}
+                        <!-- 年份快速选择 -->
+                        <transition name="cdp-fade">
+                            <div class="cdp-year-picker" v-if="showYearPicker">
+                                <button
+                                    class="cdp-year-more-btn"
+                                    @click="loadMoreYears(-8)"
+                                    type="button"
+                                    v-if="yearList[0] > 1900"
+                                >
+                                    <i class="fas fa-chevron-up"></i> 更早年份
+                                </button>
+                                <div class="cdp-year-grid">
+                                    <button
+                                        v-for="y in yearList"
+                                        :key="y"
+                                        class="cdp-year-item"
+                                        :class="{ selected: y === viewYear }"
+                                        @click="selectYear(y)"
+                                        type="button"
+                                    >
+                                        {{ y }}
+                                    </button>
+                                </div>
+                                <button
+                                    class="cdp-year-more-btn"
+                                    @click="loadMoreYears(8)"
+                                    type="button"
+                                    v-if="yearList[yearList.length - 1] < 2100"
+                                >
+                                    更多年份 <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                        </transition>
+
+                        <!-- 星期表头 -->
+                        <div class="cdp-weekdays">
+                            <span v-for="w in weekShortNames" :key="w">{{ w }}</span>
+                        </div>
+
+                        <!-- 日期网格 -->
+                        <div class="cdp-days">
+                            <button
+                                v-for="(day, idx) in calendarDays"
+                                :key="idx"
+                                class="cdp-day"
+                                :class="{
+                                    'other-month': !day.currentMonth,
+                                    'today': day.isToday,
+                                    'selected': day.isSelected,
+                                    'in-range': day.inRange,
+                                    'disabled': day.disabled
+                                }"
+                                @click="selectDay(day)"
+                                type="button"
+                                :disabled="day.disabled"
+                            >
+                                {{ day.num }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 底部操作栏（固定在底部） -->
+                    <div class="cdp-footer">
+                        <button class="cdp-footer-btn cdp-today" @click="goToday" type="button">
+                            <i class="fas fa-crosshairs"></i> 今天
+                        </button>
+                        <button class="cdp-footer-btn cdp-clear" @click="emit('update:modelValue', '')" type="button">
+                            <i class="fas fa-eraser"></i> 清除
+                        </button>
+                        <button class="cdp-footer-btn cdp-close" @click="showPanel = false" type="button">
+                            <i class="fas fa-check"></i> 确定
                         </button>
                     </div>
-                </transition>
-
-                <!-- 星期表头 -->
-                <div class="cdp-weekdays">
-                    <span v-for="w in weekShortNames" :key="w">{{ w }}</span>
                 </div>
-
-                <!-- 日期网格 -->
-                <div class="cdp-days">
-                    <button
-                        v-for="(day, idx) in calendarDays"
-                        :key="idx"
-                        class="cdp-day"
-                        :class="{
-                            'other-month': !day.currentMonth,
-                            'today': day.isToday,
-                            'selected': day.isSelected,
-                            'in-range': day.inRange,
-                            'disabled': day.disabled
-                        }"
-                        @click="selectDay(day)"
-                        type="button"
-                        :disabled="day.disabled"
-                    >
-                        {{ day.num }}
-                    </button>
-                </div>
-
-                <!-- 底部操作栏 -->
-                <div class="cdp-footer">
-                    <button class="cdp-footer-btn cdp-today" @click="goToday" type="button">
-                        <i class="fas fa-crosshairs"></i> 今天
-                    </button>
-                    <button class="cdp-footer-btn cdp-clear" @click="emit('update:modelValue', '')" type="button">
-                        <i class="fas fa-eraser"></i> 清除
-                    </button>
-                    <button class="cdp-footer-btn cdp-close" @click="showPanel = false" type="button">
-                        <i class="fas fa-check"></i> 确定
-                    </button>
-                </div>
-            </div>
-        </transition>
+            </transition>
+        </teleport>
     </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 
 const props = defineProps({
     modelValue: { type: String, default: '' },
@@ -111,6 +134,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue']);
 
 const wrapperRef = ref(null);
+const panelRef = ref(null);
 const showPanel = ref(false);
 const showYearPicker = ref(false);
 const today = new Date();
@@ -119,10 +143,13 @@ const today = new Date();
 const viewYear = ref(today.getFullYear());
 const viewMonth = ref(today.getMonth());
 
+// 面板位置（用于 Teleport 后的定位）
+const panelStyle = ref({});
+
 const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 const weekShortNames = ['日', '一', '二', '三', '四', '五', '六'];
 
-// 年份列表（前后各 8 年）
+// 年份列表（前后各 8 年，支持扩展）
 const yearList = computed(() => {
     const base = viewYear.value;
     const arr = [];
@@ -130,8 +157,49 @@ const yearList = computed(() => {
     return arr;
 });
 
+// 加载更多年份
+const loadMoreYears = (offset) => {
+    viewYear.value += offset;
+};
+
+// 更新面板位置
+const updatePanelPosition = () => {
+    if (!wrapperRef.value || !showPanel.value) return;
+    
+    const rect = wrapperRef.value.getBoundingClientRect();
+    const panelWidth = panelRef.value?.offsetWidth || 320;
+    const panelHeight = panelRef.value?.offsetHeight || 450;
+    
+    // 计算位置，避免超出视窗
+    let top = rect.bottom + 8;
+    let left = rect.left;
+    
+    // 底部空间不足时，显示在上方
+    if (top + panelHeight > window.innerHeight - 8) {
+        top = rect.top - panelHeight - 8;
+    }
+    
+    // 确保 top 不超出顶部
+    if (top < 8) top = 8;
+    
+    // 右侧溢出时，调整位置
+    if (left + panelWidth > window.innerWidth - 8) {
+        left = window.innerWidth - panelWidth - 8;
+    }
+    
+    // 确保不超出左侧
+    if (left < 8) left = 8;
+    
+    panelStyle.value = {
+        position: 'fixed',
+        top: `${top}px`,
+        left: `${left}px`,
+        zIndex: 99999
+    };
+};
+
 // 打开面板时，如果已有值则跳到该值所在月份
-watch(showPanel, (open) => {
+watch(showPanel, async (open) => {
     if (open && props.modelValue) {
         const d = parseDate(props.modelValue);
         if (d) {
@@ -140,6 +208,39 @@ watch(showPanel, (open) => {
         }
     }
     if (!open) showYearPicker.value = false;
+    
+    // 打开后更新位置
+    if (open) {
+        await nextTick();
+        updatePanelPosition();
+    }
+});
+
+// 切换年份选择器时重新计算位置（因为面板高度变化）
+watch(showYearPicker, async () => {
+    if (showPanel.value) {
+        await nextTick();
+        updatePanelPosition();
+    }
+});
+
+// 监听滚动和窗口大小变化
+const handleScrollOrResize = () => {
+    if (showPanel.value) {
+        updatePanelPosition();
+    }
+};
+
+onMounted(() => {
+    document.addEventListener('click', handleClickOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+});
+
+onBeforeUnmount(() => {
+    document.removeEventListener('click', handleClickOutside);
+    window.removeEventListener('scroll', handleScrollOrResize, true);
+    window.removeEventListener('resize', handleScrollOrResize);
 });
 
 // 工具：解析 YYYY-MM-DD
@@ -348,11 +449,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 
 /* 日历面板 */
 .cdp-panel {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 0;
-    z-index: 9999;
     width: 320px;
+    max-height: calc(100vh - 16px);
     padding: 16px;
     background: linear-gradient(145deg, #1e1b2e 0%, #161320 100%);
     border: 1px solid rgba(167, 139, 250, 0.25);
@@ -362,6 +460,16 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
         0 0 0 1px rgba(255, 255, 255, 0.05),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
     backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* 中间可滚动区域 */
+.cdp-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
 /* 头部 */
@@ -429,14 +537,42 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 /* 年份选择器 */
 .cdp-year-picker {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    flex-direction: column;
+    gap: 6px;
     margin-bottom: 12px;
     padding: 8px;
     background: rgba(0, 0, 0, 0.3);
     border-radius: 10px;
-    max-height: 160px;
+    max-height: 320px;
     overflow-y: auto;
+}
+
+.cdp-year-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.cdp-year-more-btn {
+    flex: 1 1 100%;
+    padding: 6px;
+    background: rgba(167, 139, 250, 0.15);
+    border: 1px solid rgba(167, 139, 250, 0.3);
+    border-radius: 6px;
+    color: #c4b5fd;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.18s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.cdp-year-more-btn:hover {
+    background: rgba(167, 139, 250, 0.3);
+    color: #fff;
 }
 
 .cdp-year-item {
@@ -540,6 +676,7 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
 }
 
 .cdp-footer-btn {

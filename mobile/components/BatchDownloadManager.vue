@@ -43,27 +43,38 @@
                     </button>
                 </div>
                 <div class="result-modal-body">
-                    <div class="result-summary">
-                        <span class="success-count">
-                            <i class="fas fa-check-circle"></i> 成功: {{ downloadResults.success.length }}
-                        </span>
-                        <span class="failed-count" v-if="downloadResults.failed.length > 0">
-                            <i class="fas fa-times-circle"></i> 失败: {{ downloadResults.failed.length }}
-                        </span>
+                    <!-- 汇总信息 -->
+                    <div class="result-summary-card">
+                        <div class="summary-title">总下载歌曲：{{ totalCount }}首，音质{{ qualityLabel }}</div>
+                        <div class="summary-stats">
+                            <span class="stat-success">
+                                <i class="fas fa-check-circle"></i> 成功下载 {{ downloadResults.success.length }} 首
+                            </span>
+                            <span class="stat-failed">
+                                <i class="fas fa-times-circle"></i> 失败 {{ downloadResults.failed.length }} 首
+                            </span>
+                        </div>
                     </div>
                     
+                    <!-- 成功下载明细（按专辑分组） -->
                     <div v-if="downloadResults.success.length > 0" class="result-section">
-                        <h4><i class="fas fa-check"></i> 下载成功</h4>
-                        <ul class="result-list success-list">
-                            <li v-for="(item, index) in downloadResults.success" :key="'success-' + index">
-                                <span class="song-name">{{ item.name }}</span>
-                            </li>
-                        </ul>
+                        <h4 class="section-title">成功下载的明细</h4>
+                        <div class="album-groups">
+                            <div v-for="(group, albumIndex) in groupedSuccessByAlbum" :key="'album-' + albumIndex" class="album-group">
+                                <div class="album-name">📀 {{ group.album }}</div>
+                                <ol class="song-list">
+                                    <li v-for="(songItem, songIdx) in group.songs" :key="'song-' + albumIndex + '-' + songIdx">
+                                        {{ songItem.name }}
+                                    </li>
+                                </ol>
+                            </div>
+                        </div>
                     </div>
                     
-                    <div v-if="downloadResults.failed.length > 0" class="result-section">
-                        <h4><i class="fas fa-times"></i> 下载失败</h4>
-                        <ul class="result-list failed-list">
+                    <!-- 失败下载明细 -->
+                    <div v-if="downloadResults.failed.length > 0" class="result-section failed-section">
+                        <h4 class="section-title">失败下载的明细</h4>
+                        <ul class="failed-list">
                             <li v-for="(item, index) in downloadResults.failed" :key="'failed-' + index">
                                 <span class="song-name">{{ item.name }}</span>
                                 <span class="error-msg">{{ item.error }}</span>
@@ -98,7 +109,15 @@ import { get } from '../utils/request';
 import { MoeAuthStore } from '../stores/store';
 import QualityModal from './QualityModal.vue';
 import { downloadWithMetadata } from '../utils/metadata';
-import { pickDownloadDirectory, saveBlobToDirectory, isFileSystemAccessSupported } from '../utils/fsDownload';
+import { 
+    pickDownloadDirectory, 
+    saveBlobToDirectory, 
+    isFileSystemAccessSupported,
+    loadCachedDirectory,
+    cacheDirectory,
+    clearCachedDirectory,
+    fallbackDownloadBlob
+} from '../utils/fsDownload';
 import { 
     QUALITY_OPTIONS, 
     QUALITY_FALLBACK_ORDER, 
@@ -173,6 +192,8 @@ const isCancelled = ref(false);
 const downloadDirHandle = ref(null);
 const isPickingDirectory = ref(false);
 const useFileSystemAccess = ref(isFileSystemAccessSupported());
+// 首次下载完成提示
+const hasShownDirTip = ref(localStorage.getItem('download_dir_tip_shown') === 'true');
 const downloadResults = ref({
     success: [],
     failed: []
@@ -188,6 +209,39 @@ const firstSong = computed(() => props.songs.length > 0 ? props.songs[0] : null)
 const progressPercentage = computed(() => {
     if (props.songs.length === 0) return 0;
     return ((currentIndex.value + 1) / props.songs.length) * 100;
+});
+
+// 汇总统计
+const totalCount = computed(() => props.songs.length);
+const qualityLabel = computed(() => {
+    if (selectedQuality.value) {
+        const desc = getQualityDescription(selectedQuality.value);
+        return desc?.label || selectedQuality.value.quality || '';
+    }
+    return '';
+});
+
+// 按专辑分组成功下载的歌曲
+const groupedSuccessByAlbum = computed(() => {
+    const groups = {};
+    for (const item of downloadResults.value.success) {
+        const song = item.song || {};
+        const songInfo = song.songInfo || {};
+        const album = songInfo.album || song.album || song.album_name || '未知专辑';
+        const safeAlbum = album.trim() || '未知专辑';
+        
+        if (!groups[safeAlbum]) {
+            groups[safeAlbum] = {
+                album: safeAlbum,
+                songs: []
+            };
+        }
+        groups[safeAlbum].songs.push({
+            name: item.name,
+            song: song
+        });
+    }
+    return Object.values(groups);
 });
 
 const stopDownload = () => {
@@ -221,8 +275,16 @@ const handleQualityClose = () => {
     showQualityModal.value = false;
 };
 
+// 清除缓存的下载目录（用于设置页面）
+const resetDownloadDirectory = async () => {
+    downloadDirHandle.value = null;
+    await clearCachedDirectory();
+    console.log('[BatchDownload] 下载目录已重置，下次下载需要重新选择');
+};
+
 defineExpose({
-    openQualityModal
+    openQualityModal,
+    resetDownloadDirectory
 });
 
 const handleQualitySelect = async (quality) => {
@@ -246,36 +308,46 @@ const handleQualitySelect = async (quality) => {
     await nextTick();
     await sleep(500);
     
-    // 使用 File System Access API：一次性选择下载目录，后续自动创建歌手/专辑文件夹
-    // dirHandle 会缓存，本页面生命周期内下次批量下载不再重复询问用户
-    if (useFileSystemAccess.value && !downloadDirHandle.value) {
+    // 尝试使用 File System Access API 创建文件夹结构
+    // 策略：优先使用缓存的目录句柄，其次询问用户，最后回退到原生下载
+    if (useFileSystemAccess.value) {
         try {
-            isPickingDirectory.value = true;
-            console.log('[BatchDownload] 请选择下载根目录（首次使用需要授权，后续自动复用）');
-            downloadDirHandle.value = await pickDownloadDirectory();
-            console.log('[BatchDownload] 已选择下载根目录，将自动创建 歌手/专辑 子文件夹:', downloadDirHandle.value.name);
+            // 1. 尝试从缓存加载之前保存的目录句柄
+            if (!downloadDirHandle.value) {
+                const cached = await loadCachedDirectory();
+                if (cached) {
+                    downloadDirHandle.value = cached;
+                    console.log('[BatchDownload] 使用缓存的下载目录:', cached.name);
+                }
+            }
+            
+            // 2. 如果没有缓存，询问用户（只问一次）
+            if (!downloadDirHandle.value) {
+                isPickingDirectory.value = true;
+                console.log('[BatchDownload] 首次使用，请选择下载目录（下次会自动使用）');
+                downloadDirHandle.value = await pickDownloadDirectory();
+                console.log('[BatchDownload] 已选择下载目录:', downloadDirHandle.value.name);
+            }
         } catch (err) {
             if (err.name === 'AbortError') {
-                console.log('用户取消了目录选择，已中止批量下载');
-                return;
-            }
-            // 碰到 File picker already active：自动重试一次
-            if (err.name === 'NotAllowedError' && /already active/i.test(err.message)) {
-                console.warn('[BatchDownload] 目录选择器冲突，延时 800ms 后重试一次...');
+                // 用户取消了目录选择 - 回退到原生下载，不中断下载
+                console.log('用户取消了目录选择，回退到浏览器原生下载模式');
+                downloadDirHandle.value = null;
+                useFileSystemAccess.value = false;
+            } else if (err.name === 'NotAllowedError' && /already active/i.test(err.message)) {
+                // 重试一次
                 try {
                     await sleep(800);
                     downloadDirHandle.value = await pickDownloadDirectory();
                 } catch (retryErr) {
-                    if (retryErr.name === 'AbortError') return;
-                    console.error('重试选择目录失败:', retryErr);
-                    console.warn('将回退为浏览器原生下载（不会自动创建子文件夹）');
-                    useFileSystemAccess.value = false;
+                    console.warn('重试失败，回退到原生下载:', retryErr);
                     downloadDirHandle.value = null;
+                    useFileSystemAccess.value = false;
                 }
             } else {
-                console.error('选择目录失败，回退为浏览器原生下载:', err);
-                useFileSystemAccess.value = false;
+                console.error('目录选择失败，回退到原生下载:', err);
                 downloadDirHandle.value = null;
+                useFileSystemAccess.value = false;
             }
         } finally {
             isPickingDirectory.value = false;
@@ -290,6 +362,12 @@ const handleQualitySelect = async (quality) => {
         success: [],
         failed: []
     };
+    
+    // 显示首次使用提示
+    if (!hasShownDirTip.value) {
+        hasShownDirTip.value = true;
+        localStorage.setItem('download_dir_tip_shown', 'true');
+    }
     
     emit('download-start', props.songs, quality);
     
@@ -420,7 +498,7 @@ const downloadSong = async (song, quality) => {
             const album = sanitizeFileName(songInfo.album || song.album || song.album_name || '未知专辑');
             const safeFileName = sanitizeFileName(result.fileName);
             
-            // 主流程：File System Access API — 真正在用户选的目录下创建 歌手/专辑 子文件夹
+            // 主流程：File System Access API — 在用户选择的目录下创建 歌手/专辑 子文件夹
             if (useFileSystemAccess.value && downloadDirHandle.value) {
                 const savedPath = await saveBlobToDirectory(
                     result.outputBlob,
@@ -433,21 +511,8 @@ const downloadSong = async (song, quality) => {
                 return;
             }
             
-            // 回退：浏览器原生下载（无法创建子文件夹，把路径拼到文件名里用下划线分隔，至少分类信息能保留）
-            const fallbackName = `${artist}-${album}-${safeFileName}`;
-            const url = window.URL.createObjectURL(result.outputBlob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = fallbackName;
-            link.rel = 'noopener';
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(url);
-            
-            console.log('[BatchDownload] 已触发原生下载（不支持自动建文件夹）:', fallbackName);
-            
+            // 回退：浏览器原生下载（使用浏览器默认下载路径）
+            fallbackDownloadBlob(result.outputBlob, artist, album, safeFileName);
             return;
             
         } catch (error) {
@@ -656,28 +721,40 @@ onMounted(() => {
     flex: 1;
 }
 
-.result-summary {
-    display: flex;
-    gap: 20px;
+/* 汇总卡片 */
+.result-summary-card {
+    background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
+    border-radius: 10px;
+    padding: 16px;
     margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #eee;
 }
 
-.success-count {
+.summary-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.summary-stats {
+    display: flex;
+    gap: 16px;
+}
+
+.stat-success {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 500;
     color: #52c41a;
 }
 
-.failed-count {
+.stat-failed {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 500;
     color: #ff4d4f;
 }
@@ -686,49 +763,69 @@ onMounted(() => {
     margin-bottom: 16px;
 }
 
-.result-section h4 {
+.section-title {
     margin: 0 0 12px 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* 专辑分组 */
+.album-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.album-group {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px 16px;
+    border-left: 3px solid #667eea;
+}
+
+.album-name {
     font-size: 14px;
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    color: #555;
+    margin-bottom: 8px;
 }
 
-.result-section:nth-child(2) h4 {
-    color: #52c41a;
+.song-list {
+    list-style: decimal;
+    padding-left: 24px;
+    margin: 0;
 }
 
-.result-section:nth-child(3) h4 {
-    color: #ff4d4f;
+.song-list li {
+    font-size: 13px;
+    color: #666;
+    padding: 3px 0;
 }
 
-.result-list {
+/* 失败列表 */
+.failed-section {
+    border-top: 1px solid #eee;
+    padding-top: 16px;
+}
+
+.failed-list {
     list-style: none;
     padding: 0;
     margin: 0;
-    max-height: 150px;
-    overflow-y: auto;
-}
-
-.result-list li {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 12px;
-    border-radius: 6px;
-    margin-bottom: 4px;
-}
-
-.success-list li {
-    background: #f6ffed;
 }
 
 .failed-list li {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    border-radius: 6px;
     background: #fff2f0;
+    margin-bottom: 6px;
 }
 
 .song-name {
-    font-size: 14px;
+    font-size: 13px;
     color: #333;
 }
 
