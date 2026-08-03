@@ -140,7 +140,7 @@ jobs:
           echo "Renamed files:"
           ls -lh /tmp/moekoemusic-*.tar
 
-      - name: Create Release
+      - name: Create Release (with tar files)
         if: github.event.inputs.create_release == 'true' && github.event.inputs.push_to_dockerhub != 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -156,7 +156,44 @@ jobs:
             
             ## 使用方法
             
-            ### 方式一：从 Docker Hub 拉取（推荐，自动适配架构）
+            ### 加载本地镜像（从 Releases 下载 tar 包）
+            ```bash
+            # 加载镜像
+            docker load -i moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
+            # 或
+            docker load -i moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
+            
+            # 运行容器
+            docker run -d \
+              --name moekoe-music \
+              --restart unless-stopped \
+              -p 8880:8880 \
+              -p 6521:6521 \
+              moekoemusic:amd64-${{ steps.version.outputs.version }}
+            ```
+          draft: false
+          prerelease: false
+          files: |
+            /tmp/moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
+            /tmp/moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
+
+      - name: Create Release (Docker Hub only)
+        if: github.event.inputs.create_release == 'true' && github.event.inputs.push_to_dockerhub == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.build_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Docker Image ${{ steps.version.outputs.version }}"
+          body: |
+            Docker 镜像构建版本: ${{ steps.version.outputs.version }}
+            
+            包含以下架构:
+            - AMD64 (x86_64)
+            - ARM64 (aarch64)
+            
+            ## 使用方法
+            
+            ### 从 Docker Hub 拉取（推荐，自动适配架构）
             ```bash
             # 自动选择当前系统架构
             docker pull lijsfun/moekoemusic:${{ steps.version.outputs.version }}
@@ -178,27 +215,8 @@ jobs:
             # ARM64 架构
             docker pull lijsfun/moekoemusic:arm64-${{ steps.version.outputs.version }}
             ```
-            
-            ### 方式二：加载本地镜像（从 Releases 下载 tar 包）
-            ```bash
-            # 加载镜像
-            docker load -i moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
-            # 或
-            docker load -i moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
-            
-            # 运行容器
-            docker run -d \
-              --name moekoe-music \
-              --restart unless-stopped \
-              -p 8880:8880 \
-              -p 6521:6521 \
-              moekoemusic:amd64-${{ steps.version.outputs.version }}
-            ```
           draft: false
           prerelease: false
-          files: |
-            /tmp/moekoemusic-amd64-${{ steps.version.outputs.version }}.tar
-            /tmp/moekoemusic-arm64-${{ steps.version.outputs.version }}.tar
 
       - name: Upload artifacts
         if: github.event.inputs.create_release == 'false' && github.event.inputs.push_to_dockerhub != 'true'
