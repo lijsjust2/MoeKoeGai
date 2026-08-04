@@ -279,12 +279,22 @@ const handleQualityClose = () => {
 const resetDownloadDirectory = async () => {
     downloadDirHandle.value = null;
     await clearCachedDirectory();
+    useFileSystemAccess.value = isFileSystemAccessSupported();
     console.log('[BatchDownload] 下载目录已重置，下次下载需要重新选择');
+};
+
+// 重新从缓存加载目录（不清除缓存，用于外部更新了下载路径后同步状态）
+const reloadDirectoryFromCache = async () => {
+    downloadDirHandle.value = null; // 清除内存中的旧句柄
+    useFileSystemAccess.value = isFileSystemAccessSupported();
+    // 不清除缓存，下次下载时会自动从缓存加载新目录
+    console.log('[BatchDownload] 已重置内部目录状态，下次下载将从缓存重新加载');
 };
 
 defineExpose({
     openQualityModal,
-    resetDownloadDirectory
+    resetDownloadDirectory,
+    reloadDirectoryFromCache
 });
 
 const handleQualitySelect = async (quality) => {
@@ -390,10 +400,21 @@ const handleQualitySelect = async (quality) => {
             emit('song-download-success', song, i + 1);
         } catch (error) {
             console.error(`下载失败: ${currentSongName.value}`, error);
+            // 将英文错误信息转换为用户可读的中文
+            let errorMsg = error.message || '未知错误';
+            if (errorMsg.includes('A requested file or directory could not be found')) {
+                errorMsg = '下载目录不存在或已被删除，请重新选择下载目录';
+            } else if (errorMsg.includes('NotAllowedError')) {
+                errorMsg = '没有写入权限，请选择其他目录';
+            } else if (errorMsg.includes('AbortError')) {
+                errorMsg = '下载已取消';
+            } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+                errorMsg = '网络错误，下载失败';
+            }
             downloadResults.value.failed.push({
                 name: currentSongName.value,
                 song: song,
-                error: error.message || '未知错误'
+                error: errorMsg
             });
             emit('song-download-fail', song, i + 1, error);
         }
@@ -500,15 +521,28 @@ const downloadSong = async (song, quality) => {
             
             // 主流程：File System Access API — 在用户选择的目录下创建 歌手/专辑 子文件夹
             if (useFileSystemAccess.value && downloadDirHandle.value) {
-                const savedPath = await saveBlobToDirectory(
-                    result.outputBlob,
-                    downloadDirHandle.value,
-                    artist,
-                    album,
-                    safeFileName
-                );
-                console.log('[BatchDownload] ✓ 文件已保存到:', savedPath);
-                return;
+                try {
+                    const savedPath = await saveBlobToDirectory(
+                        result.outputBlob,
+                        downloadDirHandle.value,
+                        artist,
+                        album,
+                        safeFileName
+                    );
+                    console.log('[BatchDownload] ✓ 文件已保存到:', savedPath);
+                    return;
+                } catch (fsError) {
+                    // 目录句柄失效或目录不存在，回退到原生下载
+                    console.warn('[BatchDownload] 文件系统操作失败，回退到原生下载:', fsError.message);
+                    if (fsError.message?.includes('not be found') || 
+                        fsError.name === 'NotFoundError' ||
+                        fsError.name === 'NotAllowedError') {
+                        // 清除失效的目录句柄，下次需要重新选择
+                        downloadDirHandle.value = null;
+                        await clearCachedDirectory();
+                        useFileSystemAccess.value = false;
+                    }
+                }
             }
             
             // 回退：浏览器原生下载（使用浏览器默认下载路径）

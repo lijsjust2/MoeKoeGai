@@ -108,20 +108,16 @@ export async function saveBlobToDirectory(blob, rootDir, artist, album, fileName
 
 /**
  * 回退下载：使用浏览器原生下载（不支持文件夹结构）
- * 文件名格式：歌手-专辑-歌曲名
+ * 保留原始文件名，不添加额外信息
  */
 export function fallbackDownloadBlob(blob, artist, album, fileName) {
-  const safeArtist = sanitizeFileName(artist || '未知歌手')
-  const safeAlbum = sanitizeFileName(album || '未知专辑')
   const safeFileName = sanitizeFileName(fileName)
   
-  // 用下划线分隔，保留分类信息
-  const fallbackName = `${safeArtist} - ${safeAlbum} - ${safeFileName}`
-  
+  // 直接使用原始文件名，不修改
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = fallbackName
+  link.download = safeFileName
   link.rel = 'noopener'
   link.style.display = 'none'
   document.body.appendChild(link)
@@ -129,7 +125,7 @@ export function fallbackDownloadBlob(blob, artist, album, fileName) {
   document.body.removeChild(link)
   window.URL.revokeObjectURL(url)
   
-  log('已触发原生下载:', fallbackName)
+  log('已触发原生下载:', safeFileName)
 }
 
 function sanitizeFileName(name) {

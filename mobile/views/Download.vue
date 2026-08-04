@@ -245,6 +245,36 @@
                 </div>
                 
                 <div class="config-grid">
+                    <!-- 下载路径配置 -->
+                    <div class="download-path-config">
+                        <label class="input-label">
+                            <i class="fas fa-folder"></i>
+                            <span>下载路径</span>
+                        </label>
+                        <div class="path-control">
+                            <div class="path-display" v-if="downloadPath">
+                                <i class="fas fa-folder-open"></i>
+                                <span class="path-name">{{ downloadPath }}</span>
+                            </div>
+                            <div class="path-display empty" v-else>
+                                <i class="fas fa-info-circle"></i>
+                                <span>未设置，使用浏览器默认下载路径</span>
+                            </div>
+                            <button @click="selectDownloadPath" class="path-btn select" v-if="fsSupported">
+                                <i class="fas fa-folder-plus"></i> {{ downloadPath ? '更改' : '选择路径' }}
+                            </button>
+                            <button @click="clearDownloadPath" class="path-btn clear" v-if="downloadPath && fsSupported">
+                                <i class="fas fa-times"></i> 清除
+                            </button>
+                        </div>
+                        <p class="hint" v-if="fsSupported">
+                            <i class="fas fa-lightbulb"></i> 选择路径后，会自动按「歌手/专辑」创建文件夹存放歌曲
+                        </p>
+                        <p class="hint warning" v-else>
+                            <i class="fas fa-exclamation-triangle"></i> 当前浏览器不支持自定义路径，建议使用 Chrome 或 Edge
+                        </p>
+                    </div>
+                    
                     <!-- PushPlus 推送配置 -->
                     <div class="pushplus-config">
                         <label class="input-label">
@@ -294,6 +324,7 @@
 
                 <!-- 使用 BatchDownloadManager 组件 -->
                 <BatchDownloadManager 
+                    ref="batchDownloadRef"
                     :songs="selectedSongList"
                     :show-trigger-button="true"
                     trigger-text="开始下载"
@@ -328,9 +359,65 @@ import { get } from '../utils/request';
 import { useRoute } from 'vue-router';
 import BatchDownloadManager from '../components/BatchDownloadManager.vue';
 import CustomDatePicker from '../components/CustomDatePicker.vue';
-import { savePushplusToken, getPushplusToken, sendPushNotification, formatLogsForPush } from '../utils/pushplus';
+import { savePushplusToken, getPushplusToken, sendPushNotification, formatDownloadResultForPush } from '../utils/pushplus';
+import { 
+    isFileSystemAccessSupported,
+    pickDownloadDirectory,
+    loadCachedDirectory,
+    clearCachedDirectory
+} from '../utils/fsDownload';
 
 const route = useRoute();
+
+// ===== 下载路径配置 =====
+const fsSupported = ref(isFileSystemAccessSupported());
+const downloadPath = ref(''); // 当前下载路径名称
+const batchDownloadRef = ref(null); // BatchDownloadManager 组件引用
+
+// 加载已缓存的下载路径名称
+const loadDownloadPathName = async () => {
+    if (!fsSupported.value) return;
+    try {
+        const cached = await loadCachedDirectory();
+        if (cached) {
+            downloadPath.value = cached.name;
+        }
+    } catch (err) {
+        console.warn('加载缓存目录失败:', err);
+    }
+};
+
+// 选择下载路径
+const selectDownloadPath = async () => {
+    if (!fsSupported.value) {
+        addLog('当前浏览器不支持自定义下载路径，请使用 Chrome 或 Edge', 'warning', 'fas fa-exclamation-triangle');
+        return;
+    }
+    try {
+        await pickDownloadDirectory();
+        // 重新加载路径名称
+        await loadDownloadPathName();
+        addLog(`已设置下载路径：${downloadPath.value}，将自动创建「歌手/专辑」文件夹`, 'success', 'fas fa-folder-open');
+        // 重置 BatchDownloadManager 的内部状态，让它在下次下载时从缓存重新加载新目录
+        if (batchDownloadRef.value) {
+            batchDownloadRef.value.reloadDirectoryFromCache();
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            addLog(`设置下载路径失败：${err.message}`, 'error', 'fas fa-times-circle');
+        }
+    }
+};
+
+// 清除下载路径
+const clearDownloadPath = async () => {
+    await clearCachedDirectory();
+    downloadPath.value = '';
+    if (batchDownloadRef.value) {
+        batchDownloadRef.value.resetDownloadDirectory();
+    }
+    addLog('已清除下载路径，将使用浏览器默认下载路径', 'info', 'fas fa-info-circle');
+};
 
 // 状态变量
 const artistId = ref('');
@@ -790,6 +877,11 @@ watch(() => route.query.artistId, (newArtistId) => {
     }
 }, { immediate: true });
 
+// 页面加载时，加载已缓存的下载路径名称
+onMounted(() => {
+    loadDownloadPathName();
+});
+
 // 后台加载所有专辑的歌曲
 const loadAlbumSongsInBackground = async (rawAlbums) => {
     let loadedCount = 0;
@@ -924,34 +1016,21 @@ const handleDownloadComplete = async (result) => {
         try {
             addLog('正在发送 PushPlus 推送...', 'info', 'fas fa-paper-plane');
             
-            // 构建精简的推送内容
-            let content = `总下载歌曲：${totalCount}首，音质${quality?.desc || quality?.name || quality}\n`;
-            content += `成功下载${successCount}首，失败${failedCount}首\n\n`;
+            // 获取音质信息
+            const qualityLabel = quality?.desc || quality?.name || quality || '';
             
-            // 成功下载的明细
-            if (successList && successList.length > 0) {
-                content += '成功下载的明细：\n';
-                successList.forEach((item, index) => {
-                    content += `${index + 1}、${item.name}\n`;
-                });
-                content += '\n';
-            }
-            
-            // 失败的明细
-            if (failedList && failedList.length > 0) {
-                content += '失败的明细：\n';
-                failedList.forEach((item, index) => {
-                    content += `${index + 1}、${item.name}`;
-                    if (item.error) {
-                        content += ` (${item.error})`;
-                    }
-                    content += '\n';
-                });
-            }
+            // 使用新的格式化函数生成 Markdown 内容
+            const content = formatDownloadResultForPush({
+                totalCount: totalCount,
+                quality: qualityLabel,
+                successList: successList,
+                failedList: failedList
+            });
             
             const title = `🎵 批量下载完成`;
             
-            const pushResult = await sendPushNotification(pushplusToken.value, title, content);
+            // 使用 Markdown 模板
+            const pushResult = await sendPushNotification(pushplusToken.value, title, content, 'markdown');
             
             if (pushResult.success) {
                 addLog('✓ PushPlus 推送成功', 'success', 'fas fa-check-circle');
@@ -1701,6 +1780,95 @@ const handleDownloadComplete = async (result) => {
     background: rgba(255, 255, 255, 0.04);
     padding: 12px;
     border-radius: 6px;
+}
+
+/* 下载路径配置 */
+.download-path-config {
+    background: rgba(255, 255, 255, 0.04);
+    padding: 12px;
+    border-radius: 6px;
+}
+
+.path-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.path-display {
+    flex: 1;
+    min-width: 180px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(167, 139, 250, 0.15);
+    border: 1px solid rgba(167, 139, 250, 0.3);
+    border-radius: 6px;
+    font-size: 13px;
+    color: #fff;
+}
+
+.path-display.empty {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.path-display i {
+    font-size: 14px;
+    color: #a7b5fd;
+}
+
+.path-display.empty i {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.path-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.path-btn.select {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.path-btn.select:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.path-btn.clear {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.path-btn.clear:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
+
+.hint.warning {
+    color: #fbbf24;
 }
 
 .delay-config {

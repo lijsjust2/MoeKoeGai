@@ -77,3 +77,65 @@ export function formatLogsForPush(logs, maxLines = 100) {
     const recentLogs = logs.slice(-maxLines);
     return recentLogs.map(log => log.message).join('\n');
 }
+
+/**
+ * 格式化下载结果为 Markdown 格式（按专辑分组）
+ * @param {Object} params - 下载结果参数
+ * @param {number} params.totalCount - 总歌曲数
+ * @param {string} params.quality - 音质
+ * @param {Array} params.successList - 成功列表
+ * @param {Array} params.failedList - 失败列表
+ * @returns {string} Markdown 格式内容
+ */
+export function formatDownloadResultForPush({ totalCount, quality, successList, failedList }) {
+    let content = '';
+    
+    // 汇总信息
+    content += `## 总下载歌曲：${totalCount}首，音质${quality}\n\n`;
+    content += `**成功下载${successList.length}首，失败${failedList.length}首**\n\n`;
+    
+    // 按专辑分组的成功列表
+    if (successList && successList.length > 0) {
+        // 按专辑分组
+        const groups = {};
+        for (const item of successList) {
+            const song = item.song || {};
+            const songInfo = song.songInfo || {};
+            const album = songInfo.album || song.album || song.album_name || '未知专辑';
+            const safeAlbum = album.trim() || '未知专辑';
+            
+            if (!groups[safeAlbum]) {
+                groups[safeAlbum] = [];
+            }
+            groups[safeAlbum].push(item.name);
+        }
+        
+        content += `---\n\n`;
+        content += `**成功下载的明细：**\n\n`;
+        
+        let albumIndex = 1;
+        for (const [albumName, songNames] of Object.entries(groups)) {
+            content += `### ${albumIndex}、${albumName}\n\n`;
+            songNames.forEach((songName, idx) => {
+                content += `${idx + 1}. ${songName}\n`;
+            });
+            content += '\n';
+            albumIndex++;
+        }
+    }
+    
+    // 失败列表
+    if (failedList && failedList.length > 0) {
+        content += `---\n\n`;
+        content += `**失败的明细：**\n\n`;
+        failedList.forEach((item, index) => {
+            content += `${index + 1}. ${item.name}`;
+            if (item.error) {
+                content += ` (${item.error})`;
+            }
+            content += '\n';
+        });
+    }
+    
+    return content;
+}
